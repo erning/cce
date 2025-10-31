@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# ==============================================================================
+# CCE (Claude Code Environment) Manager
+# ==============================================================================
+#
+# OVERVIEW:
+# --------
+# CCE is a shell script that allows you to manage multiple Claude Code
+# environments with different API configurations. It enables easy switching
+# between different API providers and authentication tokens without having
+# to manually set environment variables each time.
+#
+# USE CASES:
+# ----------
+# - Switch between different Claude API providers (e.g., GLM, Kimi, Minimax)
+# - Manage multiple API keys for different accounts or projects
+# - Quickly change API endpoints for testing different services
+# - Maintain separate configurations for development and production
+#
+# CONFIGURATION:
+# --------------
+# Environment files are stored in ~/.config/cce/ with the format:
+#   <name>.env
+#
+# Each environment file should contain export statements for:
+#   - ANTHROPIC_BASE_URL: The API endpoint URL
+#   - ANTHROPIC_AUTH_TOKEN: Your authentication token/key
+#
+# EXAMPLE ENVIRONMENT FILE (~/.config/cce/glm.env):
+#   export ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic"
+#   export ANTHROPIC_AUTH_TOKEN="your_token_here"
+#
+# USAGE:
+# -----
+# 1. List available environments:
+#    ./cce
+#
+# 2. Use a specific environment:
+#    ./cce <environment_name> [claude-code arguments...]
+#
+# 3. Examples:
+#    ./cce glm --help
+#    ./cce kimi-k2 "Write a Python script"
+#    ./cce minimax-m2 --version
+#
+# REQUIREMENTS:
+# ------------
+# - Claude Code CLI tool must be installed and accessible as 'claude'
+# - Environment directory: ~/.config/cce/
+# - Valid environment files with proper permissions
+#
+# ERROR HANDLING:
+# --------------
+# - If no environment name is provided, lists available environments
+# - If specified environment file doesn't exist, shows an error message
+# - Exits with appropriate error codes for debugging
+#
+# ==============================================================================
+
+ENV_NAME="$1"
+ENV_DIR="$HOME/.config/cce"
+ENV_FILE="$ENV_DIR/${ENV_NAME}.env"
+
+if [ -z "$ENV_NAME" ]; then
+  echo "Usage: $(basename $0) <name> [claude-code arguments...]"
+  if [ -d "$ENV_DIR" ]; then
+    for env_file in "$ENV_DIR"/*.env; do
+      if [ -f "$env_file" ]; then
+        echo "  $(basename "$env_file" .env)"
+      fi
+    done
+    if [ ! -f "$ENV_DIR"/*.env ] 2>/dev/null; then
+      echo "  (no environment found)"
+    fi
+  else
+    echo "  (directory $ENV_DIR does not exist)"
+  fi
+  exit 1
+fi
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "Error: File $ENV_FILE not found"
+  exit 1
+fi
+
+source "$ENV_FILE"
+# echo $ANTHROPIC_BASE_URL
+
+shift
+exec claude "$@"
