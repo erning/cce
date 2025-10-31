@@ -14,7 +14,7 @@ CCE is a shell script that allows you to manage multiple Claude Code environment
 1. Download the `cce` script to your preferred location (e.g., `/usr/local/bin/` or `~/bin/`):
 
    ```bash
-   curl -o cce https://raw.githubusercontent.com/your-repo/cce/main/cce
+   curl -o cce https://raw.githubusercontent.com/erning/cce/refs/heads/master/cce
    chmod +x cce
    ```
 
@@ -125,4 +125,4 @@ Ensure that the Claude Code CLI tool is installed and accessible in your PATH as
 
 ## License
 
-[Add your license information here]
+The MIT License
