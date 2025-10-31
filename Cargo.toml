@@ -1,0 +1,33 @@
+[package]
+name = "cce"
+version = "2.0.0"
+edition = "2021"
+authors = ["Claude Code"]
+description = "CCE (Claude Code Environment) Manager - A Rust-based CLI for managing multiple Claude API environments"
+license = "MIT"
+repository = "https://github.com/anthropics/claude-code"
+homepage = "https://github.com/anthropics/claude-code"
+keywords = ["claude", "cli", "environment", "manager"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "cce"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "cargo"] }
+dotenvy = "0.15"
+anyhow = "1.0"
+dirs = "5.0"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
