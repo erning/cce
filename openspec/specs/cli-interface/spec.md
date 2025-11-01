@@ -4,19 +4,32 @@
 TBD - created by archiving change reimplement-in-rust. Update Purpose after archive.
 ## Requirements
 ### Requirement: CLI-001 List Environments Subcommand
-**Requirement:** The system SHALL list all available environments when executed without an environment name argument.
+**Requirement:** When executed without an environment name argument, the system SHALL attempt to use fzf for interactive environment selection. If fzf is not available or the user cancels the selection, it SHALL list all available environments.
 
-**Rationale:** Maintains backward compatibility with bash version's behavior of listing environments when no argument provided.
+**Rationale:** Enhance user experience by allowing interactive selection while maintaining backward compatibility.
 
 **Implementation Notes:**
-- Display environments in alphabetical order
-- Show one environment name per line
+- Detect fzf availability using std::process::Command
+- Display fzf interface for environment selection
+- Accept keyboard navigation (arrows, j/k, Ctrl+N/Ctrl+P)
+- Accept Enter to confirm selection
+- Accept ESC or q to cancel and fall back to list view
+- Display environments in alphabetical order in fzf
+- If fzf unavailable or selection cancelled, show traditional list view
 - Include helpful usage information
-- Exit with code 1 (error) when no environment specified
 
-#### Scenario: List environments successfully
+#### Scenario: Interactive selection with fzf available
 ```
-Given environments "glm" and "kimi" exist
+Given fzf is installed and environments "glm" and "kimi" exist
+When user runs "cce" without arguments
+Then display fzf interface for environment selection
+When user navigates to "glm" and presses Enter
+Then load glm environment and execute claude
+```
+
+#### Scenario: Interactive selection with fzf unavailable
+```
+Given fzf is not installed and environments "glm" and "kimi" exist
 When user runs "cce" without arguments
 Then display:
   Usage: cce <name> [claude-code arguments...]
@@ -25,9 +38,22 @@ Then display:
 And exit with code 1
 ```
 
-#### Scenario: No environments available
+#### Scenario: User cancels interactive selection
 ```
-Given no environments exist in ~/.config/cce/
+Given fzf is installed and environments "glm" and "kimi" exist
+When user runs "cce" without arguments
+Then display fzf interface for environment selection
+When user presses ESC or q
+Then display:
+  Usage: cce <name> [claude-code arguments...]
+    glm
+    kimi
+And exit with code 1
+```
+
+#### Scenario: No environments available with fzf
+```
+Given fzf is installed but no environments exist in ~/.config/cce/
 When user runs "cce" without arguments
 Then display:
   Usage: cce <name> [claude-code arguments...]
