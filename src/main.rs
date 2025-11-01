@@ -13,7 +13,9 @@ use crate::manager::EnvironmentManager;
 #[derive(Parser, Debug)]
 #[command(name = "cce")]
 #[command(about = "Claude Code Environment Manager")]
-#[command(version = "2.0.0")]
+#[command(version = "2.0.1")]
+#[command(disable_help_flag = true)]
+#[command(disable_version_flag = true)]
 struct Cli {
     /// Environment name
     name: Option<String>,
@@ -54,7 +56,7 @@ fn select_environment_fzf(environments: &[crate::config::Environment]) -> Result
         .map_err(|e| crate::error::CceError::ExecutionFailed(format!("Failed to spawn fzf: {}", e)))?;
 
     // Write environment names to fzf's stdin
-    if let Some(mut stdin) = command.stdin.as_mut() {
+    if let Some(stdin) = command.stdin.as_mut() {
         for env in environments {
             writeln!(stdin, "{}", env.name)
                 .map_err(|e| crate::error::CceError::ExecutionFailed(format!("Failed to write to fzf: {}", e)))?;
@@ -82,6 +84,19 @@ fn select_environment_fzf(environments: &[crate::config::Environment]) -> Result
     }
 }
 
+/// Print usage information
+fn print_usage() {
+    println!("Usage: cce-2.0.1 <name> [claude-code arguments...]");
+}
+
+/// Print list of environments
+fn print_environments(environments: &[crate::config::Environment]) {
+    print_usage();
+    for env in environments {
+        println!("  {}", env.name);
+    }
+}
+
 fn list_environments() -> Result<()> {
     let manager = EnvironmentManager::new()
         .map_err(|e| {
@@ -92,7 +107,7 @@ fn list_environments() -> Result<()> {
     let environments = manager.list_environments()?;
 
     if environments.is_empty() {
-        println!("Usage: cce <name> [claude-code arguments...]");
+        print_usage();
         println!("No environments found.");
         println!("Create environment files in: {}", manager.config_dir().display());
 
@@ -111,18 +126,12 @@ fn list_environments() -> Result<()> {
             run_environment(&selected_env, &Vec::new())
         } else {
             // User cancelled, show list
-            println!("Usage: cce <name> [claude-code arguments...]");
-            for env in environments {
-                println!("  {}", env.name);
-            }
+            print_environments(&environments);
             Ok(())
         }
     } else {
         // fzf not available, show list
-        println!("Usage: cce <name> [claude-code arguments...]");
-        for env in environments {
-            println!("  {}", env.name);
-        }
+        print_environments(&environments);
         Ok(())
     }
 }

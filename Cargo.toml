@@ -1,12 +1,12 @@
 [package]
 name = "cce"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2021"
-authors = ["Claude Code"]
-description = "CCE (Claude Code Environment) Manager - A Rust-based CLI for managing multiple Claude API environments"
+authors = ["erning"]
+description = "Claude Code Environment Manager - A Rust-based CLI for managing multiple Claude API environments"
 license = "MIT"
-repository = "https://github.com/anthropics/claude-code"
-homepage = "https://github.com/anthropics/claude-code"
+repository = "https://github.com/erning/cce"
+homepage = "https://github.com/erning/cce"
 keywords = ["claude", "cli", "environment", "manager"]
 categories = ["command-line-utilities"]
 
