@@ -94,14 +94,6 @@ impl Default for EnvironmentManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{NamedTempFile, TempDir};
-
-    fn test_env_file(content: &str) -> (TempDir, PathBuf) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let env_file = temp_dir.path().join("test.env");
-        std::fs::write(&env_file, content).unwrap();
-        (temp_dir, env_file)
-    }
 
     #[test]
     fn test_list_environments_empty() {

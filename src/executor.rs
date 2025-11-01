@@ -33,7 +33,6 @@ impl CommandExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
 
     #[test]
     fn test_executor_creation() {

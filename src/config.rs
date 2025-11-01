@@ -2,7 +2,7 @@ use crate::error::{CceError, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Represents a Claude Code environment configuration
 #[derive(Debug, Clone)]
@@ -61,7 +61,7 @@ impl Environment {
             }
 
             // Parse KEY=value or export KEY=value
-            let (key, value) = parse_line(&line, &path)?;
+            let (key, value) = parse_line(line, &path)?;
             vars.insert(key, value);
         }
 
@@ -87,7 +87,7 @@ impl Environment {
 }
 
 /// Parse a single line from a .env file
-fn parse_line(line: &str, path: &PathBuf) -> Result<(String, String)> {
+fn parse_line(line: &str, path: &Path) -> Result<(String, String)> {
     // Support both "KEY=value" and "export KEY=value" formats
     let line = line.strip_prefix("export ").unwrap_or(line);
 
@@ -98,7 +98,7 @@ fn parse_line(line: &str, path: &PathBuf) -> Result<(String, String)> {
         let value = strip_quotes(&value);
         Ok((key, value))
     } else {
-        Err(CceError::InvalidFormat(path.clone()))
+        Err(CceError::InvalidFormat(path.to_path_buf()))
     }
 }
 
@@ -115,8 +115,6 @@ fn strip_quotes(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
-    use std::io::Write;
 
     #[test]
     fn test_environment_validation() {

@@ -57,6 +57,8 @@ fn main() -> Result<()> {
 }
 
 fn list_environments() -> Result<()> {
+    println!("Usage: cce <name> [claude-code arguments...]");
+
     let manager = EnvironmentManager::new()
         .map_err(|e| {
             eprintln!("Error: {}", e);
