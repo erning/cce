@@ -10,6 +10,7 @@ pub struct Environment {
     pub name: String,
     pub base_url: String,
     pub auth_token: String,
+    pub env_vars: HashMap<String, String>,
 }
 
 impl Environment {
@@ -77,6 +78,7 @@ impl Environment {
             name,
             base_url,
             auth_token,
+            env_vars: vars,
         };
 
         env.validate()?;
@@ -118,24 +120,36 @@ mod tests {
 
     #[test]
     fn test_environment_validation() {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("ANTHROPIC_BASE_URL".to_string(), "https://example.com".to_string());
+        env_vars.insert("ANTHROPIC_AUTH_TOKEN".to_string(), "token".to_string());
+
         let env = Environment {
             name: "test".to_string(),
             base_url: "https://example.com".to_string(),
             auth_token: "token".to_string(),
+            env_vars,
         };
         assert!(env.validate().is_ok());
 
+        let env_vars = HashMap::new();
         let env = Environment {
             name: "test".to_string(),
             base_url: "".to_string(),
             auth_token: "token".to_string(),
+            env_vars,
         };
         assert!(env.validate().is_err());
+
+        let mut env_vars = HashMap::new();
+        env_vars.insert("ANTHROPIC_BASE_URL".to_string(), "invalid-url".to_string());
+        env_vars.insert("ANTHROPIC_AUTH_TOKEN".to_string(), "token".to_string());
 
         let env = Environment {
             name: "test".to_string(),
             base_url: "invalid-url".to_string(),
             auth_token: "token".to_string(),
+            env_vars,
         };
         assert!(env.validate().is_err());
     }

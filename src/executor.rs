@@ -11,9 +11,10 @@ impl CommandExecutor {
         let mut command = Command::new("claude");
         command.args(args);
 
-        // Set environment variables
-        command.env("ANTHROPIC_BASE_URL", &env.base_url);
-        command.env("ANTHROPIC_AUTH_TOKEN", &env.auth_token);
+        // Set all environment variables from the .env file
+        for (key, value) in &env.env_vars {
+            command.env(key, value);
+        }
 
         // Execute the command
         let status = command.status().map_err(|e| {
@@ -38,6 +39,7 @@ mod tests {
     fn test_executor_creation() {
         let executor = CommandExecutor;
         // Basic test to ensure the executor can be created
-        assert!(std::mem::discriminant(&executor) == std::mem::discriminant(&CommandExecutor));
+        // Just verify it can be instantiated
+        let _ = executor;
     }
 }
