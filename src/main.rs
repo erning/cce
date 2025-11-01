@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::Parser;
 
 mod config;
 mod error;
@@ -12,12 +12,8 @@ use crate::manager::EnvironmentManager;
 #[command(name = "cce")]
 #[command(about = "Claude Code Environment Manager")]
 #[command(version = "2.0.0")]
-#[command(infer_subcommands = true)]
 struct Cli {
-    #[command(subcommand)]
-    command: Option<Commands>,
-
-    /// Environment name (used with 'run' command)
+    /// Environment name
     name: Option<String>,
 
     /// Arguments to pass to claude command
@@ -25,34 +21,13 @@ struct Cli {
     args: Vec<String>,
 }
 
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// List all available environments
-    List,
-    /// Run claude with a specific environment
-    Run {
-        /// Environment name
-        name: String,
-        /// Arguments to pass to claude command
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
-        Some(Commands::List) => list_environments(),
-        Some(Commands::Run { name, args }) => run_environment(&name, &args),
-        None => {
-            // When no subcommand is given, the first positional arg is treated as name
-            if let Some(name) = cli.name {
-                run_environment(&name, &cli.args)
-            } else {
-                list_environments()
-            }
-        }
+    if let Some(name) = cli.name {
+        run_environment(&name, &cli.args)
+    } else {
+        list_environments()
     }
 }
 
@@ -96,8 +71,6 @@ fn run_environment(name: &str, args: &[String]) -> Result<()> {
             eprintln!("Error loading environment '{}': {}", name, e);
             e
         })?;
-
-    println!("Using environment: {}", environment.name);
 
     let exit_code = executor::CommandExecutor::execute(&environment, args)
         .map_err(|e| {
