@@ -143,6 +143,42 @@ Ensure that:
 
 Ensure that the Claude Code CLI tool is installed and accessible in your PATH as `claude`.
 
+## Development
+
+### OpenSpec Workflow
+
+This project uses OpenSpec for managing changes and specifications. The OpenSpec workflow provides a structured approach to planning, implementing, and tracking changes.
+
+#### Key OpenSpec Commands
+
+- **`openspec list`** - List all active changes and their status
+- **`openspec show <id>`** - Display detailed information about a specific change
+- **`openspec proposal`** - Create a new change proposal with proper scaffolding
+- **`openspec apply <id>`** - Implement an approved change following the specification
+- **`openspec archive <id>`** - Archive a completed change and update specifications
+- **`openspec validate`** - Validate all specifications and changes for consistency
+
+#### Change Management Process
+
+1. **Planning**: Use `openspec proposal` to create a new change with proper documentation
+2. **Review**: Changes include `proposal.md`, `tasks.md`, and optionally `design.md`
+3. **Implementation**: Follow the structured tasks in `tasks.md` for systematic development
+4. **Validation**: Run `openspec validate --strict` to ensure specifications are correct
+5. **Completion**: Archive completed changes to maintain project history
+
+#### Project Structure
+
+```
+openspec/
+├── changes/          # Active and archived changes
+│   ├── <change-id>/  # Individual change directories
+│   └── archive/      # Completed changes
+├── specs/           # Project specifications
+└── AGENTS.md        # OpenSpec conventions and guidelines
+```
+
+For detailed OpenSpec conventions and agent guidelines, refer to `openspec/AGENTS.md`.
+
 ## License
 
 The MIT License

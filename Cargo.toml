@@ -1,6 +1,6 @@
 [package]
 name = "cce"
-version = "2.0.1"
+version = "2.0.2"
 edition = "2021"
 authors = ["erning"]
 description = "Claude Code Environment Manager - A Rust-based CLI for managing multiple Claude API environments"
