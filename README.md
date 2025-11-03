@@ -22,7 +22,12 @@ CCE is a shell script that allows you to manage multiple Claude Code environment
 
 ## Setup
 
-Create environment configuration files in `~/.config/cce/`. Each file should be named `<name>.env` and contain the following exports:
+Environment configuration files are stored using the **XDG Base Directory specification**:
+
+- **Default location**: `~/.config/cce/`
+- **Custom location**: Set `XDG_CONFIG_HOME` environment variable to use a custom path (e.g., `XDG_CONFIG_HOME=/custom/path` will use `/custom/path/cce/`)
+
+Each environment file should be named `<name>.env` and contain the following exports:
 
 ### Example Environment File (`~/.config/cce/glm.env`)
 
@@ -35,6 +40,21 @@ export ANTHROPIC_AUTH_TOKEN="your_token_here"
 
 - **ANTHROPIC_BASE_URL**: The API endpoint URL
 - **ANTHROPIC_AUTH_TOKEN**: Your authentication token/key
+
+### Migration from Old Location (macOS users)
+
+If you previously used the macOS Application Support directory (`~/Library/Application Support/cce/`), you'll need to migrate your configuration files:
+
+```bash
+# Create the new config directory
+mkdir -p ~/.config/cce
+
+# Copy existing environment files
+cp ~/Library/Application\ Support/cce/*.env ~/.config/cce/
+
+# Verify the files were copied
+ls -la ~/.config/cce/
+```
 
 ## Usage
 

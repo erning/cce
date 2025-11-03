@@ -1,8 +1,14 @@
 use crate::config::Environment;
 use crate::error::{CceError, Result};
-use dirs::config_dir;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Helper function to get the config directory from HOME/.config
+fn get_home_config_dir() -> Result<PathBuf> {
+    let home = env::var("HOME").map_err(|_| CceError::MissingDirectory(PathBuf::from("~")))?;
+    Ok(PathBuf::from(home).join(".config").join("cce"))
+}
 
 /// Manages loading and listing of environments
 pub struct EnvironmentManager {
@@ -12,11 +18,19 @@ pub struct EnvironmentManager {
 impl EnvironmentManager {
     /// Create a new environment manager
     pub fn new() -> Result<Self> {
-        let config_dir = config_dir()
-            .ok_or_else(|| {
-                CceError::MissingDirectory(PathBuf::from("~/.config"))
-            })?
-            .join("cce");
+        // Use XDG Base Directory specification
+        // Check XDG_CONFIG_HOME first, then fall back to HOME/.config
+        let config_dir = if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
+            if !xdg_config.trim().is_empty() {
+                PathBuf::from(xdg_config).join("cce")
+            } else {
+                // XDG_CONFIG_HOME is set but empty, fall back to HOME/.config
+                get_home_config_dir()?
+            }
+        } else {
+            // XDG_CONFIG_HOME not set, use HOME/.config
+            get_home_config_dir()?
+        };
 
         Ok(Self { config_dir })
     }
