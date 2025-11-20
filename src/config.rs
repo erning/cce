@@ -7,29 +7,44 @@ use std::process::Command;
 #[derive(Debug, Clone)]
 pub struct Environment {
     pub name: String,
-    pub base_url: String,
-    pub auth_token: String,
     pub env_vars: HashMap<String, String>,
 }
 
 impl Environment {
     /// Validate the environment configuration
     pub fn validate(&self) -> Result<()> {
-        if self.base_url.is_empty() {
+        // Validate BASE_URL
+        let base_url = self
+            .env_vars
+            .get("ANTHROPIC_BASE_URL")
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        if base_url.is_empty() {
             return Err(CceError::ValidationFailed(
                 "ANTHROPIC_BASE_URL is required".to_string(),
             ));
         }
 
-        if self.auth_token.is_empty() {
+        // Validate authentication (either ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY is required)
+        let has_auth_token = self
+            .env_vars
+            .get("ANTHROPIC_AUTH_TOKEN")
+            .is_some_and(|v| !v.is_empty());
+        let has_api_key = self
+            .env_vars
+            .get("ANTHROPIC_API_KEY")
+            .is_some_and(|v| !v.is_empty());
+
+        if !has_auth_token && !has_api_key {
             return Err(CceError::ValidationFailed(
-                "ANTHROPIC_AUTH_TOKEN is required".to_string(),
+                "Either ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY is required".to_string(),
             ));
         }
 
         // Basic URL validation
-        if !self.base_url.starts_with("http://")
-            && !self.base_url.starts_with("https://")
+        if !base_url.starts_with("http://")
+            && !base_url.starts_with("https://")
         {
             return Err(CceError::ValidationFailed(
                 "ANTHROPIC_BASE_URL must be a valid HTTP or HTTPS URL"
@@ -80,17 +95,8 @@ impl Environment {
             }
         }
 
-        let base_url =
-            vars.get("ANTHROPIC_BASE_URL").cloned().unwrap_or_default();
-        let auth_token = vars
-            .get("ANTHROPIC_AUTH_TOKEN")
-            .cloned()
-            .unwrap_or_default();
-
         let env = Environment {
             name,
-            base_url,
-            auth_token,
             env_vars: vars,
         };
 
@@ -122,6 +128,7 @@ mod tests {
 
     #[test]
     fn test_environment_validation() {
+        // Test valid environment with ANTHROPIC_AUTH_TOKEN
         let mut env_vars = HashMap::new();
         env_vars.insert(
             "ANTHROPIC_BASE_URL".to_string(),
@@ -132,33 +139,57 @@ mod tests {
 
         let env = Environment {
             name: "test".to_string(),
-            base_url: "https://example.com".to_string(),
-            auth_token: "token".to_string(),
             env_vars,
         };
         assert!(env.validate().is_ok());
 
+        // Test valid environment with ANTHROPIC_API_KEY
+        let mut env_vars = HashMap::new();
+        env_vars.insert(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "https://example.com".to_string(),
+        );
+        env_vars
+            .insert("ANTHROPIC_API_KEY".to_string(), "key123".to_string());
+
+        let env = Environment {
+            name: "test".to_string(),
+            env_vars,
+        };
+        assert!(env.validate().is_ok());
+
+        // Test missing ANTHROPIC_BASE_URL
         let env_vars = HashMap::new();
         let env = Environment {
             name: "test".to_string(),
-            base_url: "".to_string(),
-            auth_token: "token".to_string(),
             env_vars,
         };
         assert!(env.validate().is_err());
 
+        // Test missing both authentication tokens
+        let mut env_vars = HashMap::new();
+        env_vars.insert(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "https://example.com".to_string(),
+        );
+
+        let env = Environment {
+            name: "test".to_string(),
+            env_vars,
+        };
+        assert!(env.validate().is_err());
+
+        // Test invalid URL
         let mut env_vars = HashMap::new();
         env_vars.insert(
             "ANTHROPIC_BASE_URL".to_string(),
             "invalid-url".to_string(),
         );
         env_vars
-            .insert("ANTHROPIC_AUTH_TOKEN".to_string(), "token".to_string());
+            .insert("ANTHROPIC_API_KEY".to_string(), "key123".to_string());
 
         let env = Environment {
             name: "test".to_string(),
-            base_url: "invalid-url".to_string(),
-            auth_token: "token".to_string(),
             env_vars,
         };
         assert!(env.validate().is_err());
