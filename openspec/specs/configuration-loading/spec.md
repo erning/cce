@@ -4,47 +4,62 @@
 TBD - created by archiving change reimplement-in-rust. Update Purpose after archive.
 ## Requirements
 ### Requirement: CONF-001 File Format Support
-**Requirement:** The system SHALL support standard .env file format with key=value pairs, with optional 'export' prefix.
+**Requirement:** The system SHALL support standard .env file format with key=value pairs, with optional 'export' prefix, and full shell syntax including variable references, command substitution, and conditional logic.
 
-**Rationale:** Maintains compatibility with existing environment files and follows .env file conventions.
+**Rationale:** Enables powerful environment file scripting while maintaining compatibility with existing files.
 
 **Implementation Notes:**
-- Parse lines with format: `KEY=value` or `export KEY=value`
-- Ignore empty lines and lines starting with #
-- Support quoted values (both single and double quotes)
-- Support environment variable interpolation ($VAR or ${VAR})
+- Execute .env files using shell `source` command instead of line-by-line parsing
+- Support full shell syntax: variable references (${VAR}), command substitution ($()), conditionals (if/then)
+- Support quoted strings with spaces and special characters
+- Maintain backward compatibility with simple KEY=value format
+- Parse output from `env` command to extract all environment variables
 
-#### Scenario: Standard .env format
+#### Scenario: Variable reference
+```
+Given file contains:
+  BASE_URL="https://api.example.com"
+  ANTHROPIC_BASE_URL="${BASE_URL}/v1"
+When system parses the file
+Then extract base_url: "https://api.example.com/v1"
+```
+
+#### Scenario: Command substitution
 ```
 Given file contains:
   ANTHROPIC_BASE_URL=https://api.example.com
+  ANTHROPIC_AUTH_TOKEN=$(cat ~/.token)
+When system parses the file
+Then extract auth_token from the file contents
+```
+
+#### Scenario: Conditional logic
+```
+Given file contains:
+  ENV=production
+  if [ "$ENV" = "production" ]; then
+    export ANTHROPIC_AUTH_TOKEN=sk_prod_token
+  else
+    export ANTHROPIC_AUTH_TOKEN=sk_dev_token
+  fi
+When system parses the file
+Then extract auth_token based on the conditional logic
+```
+
+#### Scenario: Backward compatibility
+```
+Given file contains simple KEY=value format:
+  ANTHROPIC_BASE_URL=https://api.example.com
   ANTHROPIC_AUTH_TOKEN=secret123
 When system parses the file
-Then extract:
-  base_url: "https://api.example.com"
-  auth_token: "secret123"
+Then extract the same values as before
 ```
 
-#### Scenario: Export prefix format
+#### Scenario: Shell error handling
 ```
-Given file contains:
-  export ANTHROPIC_BASE_URL="https://api.example.com"
-  export ANTHROPIC_AUTH_TOKEN="secret123"
-When system parses the file
-Then extract the same values as standard format
-```
-
-#### Scenario: Comments and empty lines
-```
-Given file contains:
-  # This is a comment
-
-  export ANTHROPIC_BASE_URL=https://api.example.com
-  # Another comment
-  export ANTHROPIC_AUTH_TOKEN=secret123
-
-When system parses the file
-Then ignore comments and empty lines, extract only the key-value pairs
+Given file contains invalid shell syntax
+When system attempts to source the file
+Then return error: "Failed to source environment file: [shell error]"
 ```
 
 ### Requirement: CONF-002 Required Fields Validation
