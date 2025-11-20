@@ -10,7 +10,7 @@ use cce::manager::EnvironmentManager;
 #[derive(Parser, Debug)]
 #[command(name = "cce")]
 #[command(about = "Claude Code Environment Manager")]
-#[command(version = "2.0.4")]
+#[command(version = "2.0.5")]
 #[command(disable_help_flag = true)]
 #[command(disable_version_flag = true)]
 struct Cli {
@@ -93,7 +93,7 @@ fn select_environment_fzf(
 
 /// Print usage information
 fn print_usage() {
-    println!("Usage: cce-2.0.4 <name> [claude-code arguments...]");
+    println!("Usage: cce-2.0.5 <name> [claude-code arguments...]");
 }
 
 /// Print list of environments
@@ -151,13 +151,13 @@ fn run_environment(name: &str, args: &[String]) -> Result<()> {
         e
     })?;
 
-    let environment = manager.load_environment(name).map_err(|e| {
-        eprintln!("Error loading environment '{}': {}", name, e);
+    let env_file = manager.get_environment_file(name).map_err(|e| {
+        eprintln!("Error getting environment file '{}': {}", name, e);
         e
     })?;
 
     let exit_code =
-        CommandExecutor::execute(&environment, args).map_err(|e| {
+        CommandExecutor::execute(&env_file, args).map_err(|e| {
             eprintln!("Error executing command: {}", e);
             e
         })?;

@@ -90,14 +90,20 @@ impl EnvironmentManager {
         Ok(environments)
     }
 
-    /// Load a specific environment by name
-    pub fn load_environment(&self, name: &str) -> Result<Environment> {
+    /// Get the environment file path for a specific environment name
+    pub fn get_environment_file(&self, name: &str) -> Result<PathBuf> {
         let env_file = self.config_dir.join(format!("{}.env", name));
 
         if !env_file.exists() {
             return Err(CceError::MissingFile(env_file));
         }
 
+        Ok(env_file)
+    }
+
+    /// Load a specific environment by name (deprecated - use get_environment_file instead)
+    pub fn load_environment(&self, name: &str) -> Result<Environment> {
+        let env_file = self.get_environment_file(name)?;
         Environment::from_file(env_file, name.to_string())
     }
 }
