@@ -10,7 +10,7 @@ use cce::manager::EnvironmentManager;
 #[derive(Parser, Debug)]
 #[command(name = "cce")]
 #[command(about = "Claude Code Environment Manager")]
-#[command(version = "2.0.3")]
+#[command(version = "2.0.4")]
 #[command(disable_help_flag = true)]
 #[command(disable_version_flag = true)]
 struct Cli {
@@ -93,7 +93,7 @@ fn select_environment_fzf(
 
 /// Print usage information
 fn print_usage() {
-    println!("Usage: cce-2.0.3 <name> [claude-code arguments...]");
+    println!("Usage: cce-2.0.4 <name> [claude-code arguments...]");
 }
 
 /// Print list of environments
