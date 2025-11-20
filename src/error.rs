@@ -21,6 +21,9 @@ pub enum CceError {
     #[error("Failed to execute command: {0}")]
     ExecutionFailed(String),
 
+    #[error("Shell command failed: {0}")]
+    ShellCommandFailed(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

@@ -1,8 +1,7 @@
 use crate::error::{CceError, Result};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::process::Command;
 
 /// Represents a Claude Code environment configuration
 #[derive(Debug, Clone)]
@@ -29,46 +28,60 @@ impl Environment {
         }
 
         // Basic URL validation
-        if !self.base_url.starts_with("http://") && !self.base_url.starts_with("https://") {
+        if !self.base_url.starts_with("http://")
+            && !self.base_url.starts_with("https://")
+        {
             return Err(CceError::ValidationFailed(
-                "ANTHROPIC_BASE_URL must be a valid HTTP or HTTPS URL".to_string(),
+                "ANTHROPIC_BASE_URL must be a valid HTTP or HTTPS URL"
+                    .to_string(),
             ));
         }
 
         Ok(())
     }
 
-    /// Load environment from a .env file
+    /// Load environment from a .env file using shell source
     pub fn from_file(path: PathBuf, name: String) -> Result<Self> {
-        let file = File::open(&path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                CceError::MissingFile(path.clone())
-            } else {
-                CceError::Io(e)
-            }
-        })?;
-
-        let reader = BufReader::new(file);
-        let mut vars = HashMap::new();
-
-        for line in reader.lines() {
-            let line = line.map_err(CceError::Io)?;
-            let line = line.trim();
-
-            // Skip empty lines and comments
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            // Parse KEY=value or export KEY=value
-            let (key, value) = parse_line(line, &path)?;
-            vars.insert(key, value);
+        // Check if file exists
+        if !path.exists() {
+            return Err(CceError::MissingFile(path.clone()));
         }
 
-        let base_url = vars
-            .get("ANTHROPIC_BASE_URL")
-            .cloned()
-            .unwrap_or_default();
+        // Build shell command: source the env file and print all environment variables
+        // Using 'env' command to print all variables after sourcing
+        let shell_cmd = format!(
+            "source '{}' && env",
+            path.to_string_lossy().replace('\'', "'\\''")
+        );
+
+        // Execute the shell command
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(&shell_cmd)
+            .output()
+            .map_err(CceError::Io)?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(CceError::ShellCommandFailed(format!(
+                "Failed to source environment file: {}",
+                stderr
+            )));
+        }
+
+        // Parse the env output
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut vars = HashMap::new();
+
+        for line in stdout.lines() {
+            // Parse KEY=value format
+            if let Some((key, value)) = parse_env_line(line) {
+                vars.insert(key, value);
+            }
+        }
+
+        let base_url =
+            vars.get("ANTHROPIC_BASE_URL").cloned().unwrap_or_default();
         let auth_token = vars
             .get("ANTHROPIC_AUTH_TOKEN")
             .cloned()
@@ -86,29 +99,20 @@ impl Environment {
     }
 }
 
-/// Parse a single line from a .env file
-fn parse_line(line: &str, path: &Path) -> Result<(String, String)> {
-    // Support both "KEY=value" and "export KEY=value" formats
-    let line = line.strip_prefix("export ").unwrap_or(line);
+/// Parse a line from 'env' command output (format: KEY=value)
+fn parse_env_line(line: &str) -> Option<(String, String)> {
+    // Skip empty lines
+    if line.is_empty() {
+        return None;
+    }
 
+    // Parse KEY=value format (value may contain '=')
     if let Some((key, value)) = line.split_once('=') {
         let key = key.trim().to_string();
-        let value = value.trim().to_string();
-        // Remove surrounding quotes if present
-        let value = strip_quotes(&value);
-        Ok((key, value))
+        let value = value.to_string();
+        Some((key, value))
     } else {
-        Err(CceError::InvalidFormat(path.to_path_buf()))
-    }
-}
-
-/// Remove surrounding quotes from a value
-fn strip_quotes(s: &str) -> String {
-    let s = s.trim();
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
+        None
     }
 }
 
@@ -119,8 +123,12 @@ mod tests {
     #[test]
     fn test_environment_validation() {
         let mut env_vars = HashMap::new();
-        env_vars.insert("ANTHROPIC_BASE_URL".to_string(), "https://example.com".to_string());
-        env_vars.insert("ANTHROPIC_AUTH_TOKEN".to_string(), "token".to_string());
+        env_vars.insert(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "https://example.com".to_string(),
+        );
+        env_vars
+            .insert("ANTHROPIC_AUTH_TOKEN".to_string(), "token".to_string());
 
         let env = Environment {
             name: "test".to_string(),
@@ -140,8 +148,12 @@ mod tests {
         assert!(env.validate().is_err());
 
         let mut env_vars = HashMap::new();
-        env_vars.insert("ANTHROPIC_BASE_URL".to_string(), "invalid-url".to_string());
-        env_vars.insert("ANTHROPIC_AUTH_TOKEN".to_string(), "token".to_string());
+        env_vars.insert(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "invalid-url".to_string(),
+        );
+        env_vars
+            .insert("ANTHROPIC_AUTH_TOKEN".to_string(), "token".to_string());
 
         let env = Environment {
             name: "test".to_string(),
@@ -153,18 +165,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_line() {
-        let path = PathBuf::from("test.env");
-        let (key, value) = parse_line("KEY=value", &path).unwrap();
+    fn test_parse_env_line() {
+        // Test basic KEY=value parsing
+        let (key, value) = parse_env_line("KEY=value").unwrap();
         assert_eq!(key, "KEY");
         assert_eq!(value, "value");
 
-        let (key, value) = parse_line("export KEY=value", &path).unwrap();
+        // Test value with equals sign
+        let (key, value) = parse_env_line("KEY=value=with=equals").unwrap();
         assert_eq!(key, "KEY");
-        assert_eq!(value, "value");
+        assert_eq!(value, "value=with=equals");
 
-        let (key, value) = parse_line("KEY=\"quoted value\"", &path).unwrap();
-        assert_eq!(key, "KEY");
-        assert_eq!(value, "quoted value");
+        // Test empty line
+        assert_eq!(parse_env_line(""), None);
+
+        // Test line without equals sign
+        assert_eq!(parse_env_line("INVALID_LINE"), None);
     }
 }

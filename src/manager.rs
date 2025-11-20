@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 /// Helper function to get the config directory from HOME/.config
 fn get_home_config_dir() -> Result<PathBuf> {
-    let home = env::var("HOME").map_err(|_| CceError::MissingDirectory(PathBuf::from("~")))?;
+    let home = env::var("HOME")
+        .map_err(|_| CceError::MissingDirectory(PathBuf::from("~")))?;
     Ok(PathBuf::from(home).join(".config").join("cce"))
 }
 
@@ -53,21 +54,23 @@ impl EnvironmentManager {
         let mut environments = Vec::new();
 
         // Read all .env files in the config directory
-        for entry in fs::read_dir(&self.config_dir)
-            .map_err(CceError::Io)?
-        {
+        for entry in fs::read_dir(&self.config_dir).map_err(CceError::Io)? {
             let entry = entry.map_err(CceError::Io)?;
             let path = entry.path();
 
             if path.is_file() {
                 if let Some(extension) = path.extension() {
                     if extension == "env" {
-                        let file_name = path.file_name()
+                        let file_name = path
+                            .file_name()
                             .and_then(|s| s.to_str())
-                            .ok_or_else(|| CceError::InvalidFormat(path.clone()))?;
+                            .ok_or_else(|| {
+                                CceError::InvalidFormat(path.clone())
+                            })?;
 
                         // Remove .env extension to get the environment name
-                        let name = file_name.strip_suffix(".env")
+                        let name = file_name
+                            .strip_suffix(".env")
                             .unwrap_or(file_name)
                             .to_string();
 
