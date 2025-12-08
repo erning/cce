@@ -79,13 +79,13 @@ This will display all available environment configurations in `~/.config/cce/`.
 ./cce
 
 # Use GLM environment with --help
-./cce glm --help
+./cce glm -- --help
 
 # Use Kimi environment with a prompt
-./cce kimi-k2 "Write a Python script"
+./cce kimi-k2 -- "Write a Python script"
 
 # Use Minimax environment with --version
-./cce minimax-m2 --version
+./cce minimax-m2 -- --version
 ```
 
 ## Requirements
