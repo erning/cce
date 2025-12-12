@@ -101,7 +101,7 @@ impl EnvironmentManager {
         Ok(env_file)
     }
 
-    /// Load a specific environment by name (deprecated - use get_environment_file instead)
+    /// Load a specific environment by name
     pub fn load_environment(&self, name: &str) -> Result<Environment> {
         let env_file = self.get_environment_file(name)?;
         Environment::from_file(env_file, name.to_string())
@@ -117,6 +117,7 @@ impl Default for EnvironmentManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_list_environments_empty() {
@@ -131,5 +132,114 @@ mod tests {
     fn test_environment_manager_new() {
         let manager = EnvironmentManager::new().unwrap();
         assert!(manager.config_dir().ends_with("cce"));
+    }
+
+    #[test]
+    fn test_list_environments_with_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create test env files
+        let env1_path = temp_dir.path().join("test1.env");
+        let env2_path = temp_dir.path().join("test2.env");
+
+        let mut file1 = fs::File::create(&env1_path).unwrap();
+        writeln!(file1, "export ANTHROPIC_AUTH_TOKEN=token1").unwrap();
+
+        let mut file2 = fs::File::create(&env2_path).unwrap();
+        writeln!(file2, "export ANTHROPIC_AUTH_TOKEN=token2").unwrap();
+
+        let manager = EnvironmentManager {
+            config_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let envs = manager.list_environments().unwrap();
+        assert_eq!(envs.len(), 2);
+        assert!(envs.iter().any(|e| e.name == "test1"));
+        assert!(envs.iter().any(|e| e.name == "test2"));
+    }
+
+    #[test]
+    fn test_list_environments_sorted() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create test env files in reverse order
+        for name in &["zebra", "alpha", "middle"] {
+            let path = temp_dir.path().join(format!("{}.env", name));
+            let mut file = fs::File::create(&path).unwrap();
+            writeln!(file, "export ANTHROPIC_AUTH_TOKEN=token").unwrap();
+        }
+
+        let manager = EnvironmentManager {
+            config_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let envs = manager.list_environments().unwrap();
+        assert_eq!(envs.len(), 3);
+        assert_eq!(envs[0].name, "alpha");
+        assert_eq!(envs[1].name, "middle");
+        assert_eq!(envs[2].name, "zebra");
+    }
+
+    #[test]
+    fn test_get_environment_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let env_path = temp_dir.path().join("myenv.env");
+        let mut file = fs::File::create(&env_path).unwrap();
+        writeln!(file, "export ANTHROPIC_AUTH_TOKEN=token").unwrap();
+
+        let manager = EnvironmentManager {
+            config_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let result = manager.get_environment_file("myenv");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), env_path);
+    }
+
+    #[test]
+    fn test_get_environment_file_not_found() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = EnvironmentManager {
+            config_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let result = manager.get_environment_file("nonexistent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_environment() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let env_path = temp_dir.path().join("loadtest.env");
+        let mut file = fs::File::create(&env_path).unwrap();
+        writeln!(file, "export ANTHROPIC_AUTH_TOKEN=token").unwrap();
+
+        let manager = EnvironmentManager {
+            config_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let env = manager.load_environment("loadtest").unwrap();
+        assert_eq!(env.name, "loadtest");
+        assert_eq!(env.file_path, env_path);
+    }
+
+    #[test]
+    fn test_ignores_non_env_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create various files
+        fs::File::create(temp_dir.path().join("valid.env")).unwrap();
+        fs::File::create(temp_dir.path().join("readme.txt")).unwrap();
+        fs::File::create(temp_dir.path().join("config.json")).unwrap();
+
+        let manager = EnvironmentManager {
+            config_dir: temp_dir.path().to_path_buf(),
+        };
+
+        let envs = manager.list_environments().unwrap();
+        assert_eq!(envs.len(), 1);
+        assert_eq!(envs[0].name, "valid");
     }
 }

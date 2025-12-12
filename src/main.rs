@@ -10,10 +10,17 @@ use cce::manager::EnvironmentManager;
 #[derive(Parser, Debug)]
 #[command(name = "cce")]
 #[command(about = "Claude Code Environment Manager")]
-#[command(version = "2.0.6")]
+#[command(version, disable_version_flag = true)]
 struct Cli {
+    /// Print version
+    #[arg(long)]
+    version: bool,
     /// Environment name
     name: Option<String>,
+
+    /// Validate environment files
+    #[arg(long)]
+    validate: bool,
 
     /// Arguments to pass to claude command
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -23,17 +30,82 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if let Some(name) = cli.name {
+    if cli.version {
+        println!("cce {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    if cli.validate {
+        validate_environments(cli.name.as_deref())
+    } else if let Some(name) = cli.name {
         run_environment(&name, &cli.args)
     } else {
         list_environments()
     }
 }
 
+/// Validate environment files
+fn validate_environments(name: Option<&str>) -> Result<()> {
+    let manager = EnvironmentManager::new().map_err(|e| {
+        eprintln!("Error: {}", e);
+        e
+    })?;
+
+    let environments = if let Some(name) = name {
+        vec![manager.load_environment(name)?]
+    } else {
+        manager.list_environments()?
+    };
+
+    if environments.is_empty() {
+        println!("No environments found to validate.");
+        return Ok(());
+    }
+
+    let mut all_valid = true;
+
+    for env in &environments {
+        print!("Validating {}... ", env.name);
+        match env.validate() {
+            Ok(result) => {
+                if result.is_valid {
+                    println!("✓ OK");
+                    if !result.missing_optional.is_empty() {
+                        println!(
+                            "  Note: Missing optional vars: {}",
+                            result.missing_optional.join(", ")
+                        );
+                    }
+                } else {
+                    println!("✗ INVALID");
+                    println!(
+                        "  Missing required: {}",
+                        result.missing_required.join(", ")
+                    );
+                    all_valid = false;
+                }
+            }
+            Err(e) => {
+                println!("✗ ERROR: {}", e);
+                all_valid = false;
+            }
+        }
+    }
+
+    if all_valid {
+        println!("\nAll environments are valid.");
+    } else {
+        println!("\nSome environments have issues.");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
 /// Check if fzf is available on the system
 fn is_fzf_available() -> bool {
-    Command::new("which")
-        .arg("fzf")
+    Command::new("fzf")
+        .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -91,7 +163,7 @@ fn select_environment_fzf(
 
 /// Print usage information
 fn print_usage() {
-    println!("Usage: cce-2.0.6 <name> [claude-code arguments...]");
+    println!("Usage: cce <name> [claude-code arguments...]");
 }
 
 /// Print list of environments
