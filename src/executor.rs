@@ -12,12 +12,13 @@ use crate::error::CceError;
 pub struct CommandExecutor;
 
 impl CommandExecutor {
-    /// Execute claude command with environment variables loaded from the given .env file
-    pub fn execute(env_file: &Path, args: &[String]) -> Result<i32> {
-        // Build shell command: source the env file and exec claude with args
+    /// Execute command with environment variables loaded from the given .env file
+    pub fn execute(env_file: &Path, command: &str, args: &[String]) -> Result<i32> {
+        // Build shell command: source the env file and exec the specified command with args
         let shell_cmd = format!(
-            ". '{}' && exec claude {}",
+            ". '{}' && exec {} {}",
             env_file.to_string_lossy().replace('\'', "'\\''"),
+            command,
             args.join(" ")
         );
 
@@ -52,16 +53,16 @@ impl CommandExecutor {
 
             let env_vars = parse_env_file(&content);
 
-            let mut command = Command::new("claude");
-            command.args(args);
+            let mut cmd = Command::new(command);
+            cmd.args(args);
 
             for (key, value) in env_vars {
-                command.env(key, value);
+                cmd.env(key, value);
             }
 
-            let status = command.status().map_err(|e| {
+            let status = cmd.status().map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    CceError::ClaudeNotFound
+                    CceError::CommandNotFound(command.to_string())
                 } else {
                     CceError::ExecutionFailed(e.to_string())
                 }

@@ -4,9 +4,9 @@
 TBD - created by archiving change reimplement-in-rust. Update Purpose after archive.
 ## Requirements
 ### Requirement: CLI-001 List Environments Subcommand
-**Requirement:** When executed without an environment name argument, the system SHALL attempt to use fzf for interactive environment selection. If fzf is not available or the user cancels the selection, it SHALL list all available environments.
+**Requirement:** When executed without an environment name argument, the system SHALL attempt to use fzf for interactive environment selection. If fzf is not available or the user cancels the selection, it SHALL list all available environments. Any arguments provided after `--` SHALL be passed to the command after environment selection.
 
-**Rationale:** Enhance user experience by allowing interactive selection while maintaining backward compatibility.
+**Rationale:** Enhance user experience by allowing interactive selection while maintaining backward compatibility. Allow users to specify command arguments before selecting an environment.
 
 **Implementation Notes:**
 - Detect fzf availability using std::process::Command
@@ -17,6 +17,7 @@ TBD - created by archiving change reimplement-in-rust. Update Purpose after arch
 - Display environments in alphabetical order in fzf
 - If fzf unavailable or selection cancelled, show traditional list view
 - Include helpful usage information
+- Pass any arguments after `--` to the executed command
 
 #### Scenario: Interactive selection with fzf available
 ```
@@ -25,6 +26,15 @@ When user runs "cce" without arguments
 Then display fzf interface for environment selection
 When user navigates to "glm" and presses Enter
 Then load glm environment and execute claude
+```
+
+#### Scenario: Interactive selection with arguments
+```
+Given fzf is installed and environments "glm" and "kimi" exist
+When user runs "cce -- --help"
+Then display fzf interface for environment selection
+When user navigates to "glm" and presses Enter
+Then load glm environment and execute "claude --help"
 ```
 
 #### Scenario: Interactive selection with fzf unavailable
@@ -169,26 +179,57 @@ When user runs: cce minimax 'echo "hello world"'
 Then execute: claude 'echo "hello world"'
 ```
 
-### Requirement: CLI-006 Subcommand Structure (New Style)
-**Requirement:** The CLI SHALL support subcommand pattern (list, run) for better structure and extensibility.
+### Requirement: CLI-006 Positional Argument Structure
+**Requirement:** The CLI SHALL use positional arguments for environment selection, with optional flags for configuration.
 
-**Rationale:** Provides better organization and allows for future enhancements while maintaining backward compatibility with single-argument usage.
+**Rationale:** Simple and intuitive CLI design. Environment name as first positional argument, remaining arguments passed to the command.
 
 **Implementation Notes:**
-- Accept both old style (positional) and new style (subcommands)
-- Default to "run" subcommand when environment name provided
-- "list" subcommand shows available environments
+- First positional argument is the environment name (optional)
+- If no environment name, show fzf selection or list
+- If argument starts with `-`, treat as args for passthrough (not environment name)
+- Remaining arguments after environment name passed to command
 
-#### Scenario: Backward compatible usage
+#### Scenario: Environment as positional argument
 ```
 Given environment "glm" exists
 When user runs: cce glm --help
-Then interpret as: cce run glm --help
+Then load glm environment and execute: claude --help
 ```
 
-#### Scenario: New subcommand style
+#### Scenario: No arguments shows selection/list
 ```
-When user runs: cce list
-Then show available environments
+When user runs: cce
+Then show fzf selection (if available) or list environments
 ```
+
+### Requirement: CLI-007 Configurable Command Executable
+**Requirement:** The system SHALL accept an optional `--command` (or `-c`) parameter to specify the executable name to run, with a default value of "claude".
+
+**Rationale:** Allows users to use alternative executables (e.g., `claude-code`, custom wrapper scripts) while maintaining backward compatibility.
+
+**Implementation Notes:**
+- Add `--command` / `-c` as a global option in the CLI struct
+- Default value is "claude" to maintain backward compatibility
+- The parameter value is passed to the command executor
+- Works with both direct environment execution and fzf selection
+
+#### Scenario: Default executable behavior
+- **WHEN** user runs `cce glm` without `--command` parameter
+- **THEN** execute the default `claude` command with glm environment
+
+#### Scenario: Custom executable specified
+- **WHEN** user runs `cce --command claude-code glm`
+- **THEN** execute `claude-code` command with glm environment
+
+#### Scenario: Short flag for custom executable
+- **WHEN** user runs `cce -c my-claude glm --help`
+- **THEN** execute `my-claude --help` with glm environment
+
+#### Scenario: Custom executable with fzf selection
+- **WHEN** user runs `cce --command claude-code` without environment name
+- **AND** fzf is available
+- **THEN** show fzf selection interface
+- **WHEN** user selects an environment
+- **THEN** execute `claude-code` with the selected environment
 

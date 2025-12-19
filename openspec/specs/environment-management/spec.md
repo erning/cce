@@ -48,38 +48,40 @@ Then the system shall display "(no environment found)"
 ```
 
 ### Requirement: ENV-MGMT-003 Environment Validation
-**Requirement:** The system SHALL validate that each environment file contains required variables: `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`.
+**Requirement:** The system SHALL validate that each environment file contains the required variable `ANTHROPIC_AUTH_TOKEN`. `ANTHROPIC_BASE_URL` is optional.
 
-**Rationale:** Prevents runtime errors when trying to use an incomplete environment configuration.
+**Rationale:** Ensures authentication is configured. Base URL is optional as some providers may use defaults.
 
 **Implementation Notes:**
-- Both variables must be present and non-empty
-- URL format should be valid (basic validation)
-- Token must be non-empty string
+- `ANTHROPIC_AUTH_TOKEN` must be present and non-empty
+- `ANTHROPIC_BASE_URL` is optional (noted as missing optional if absent)
+- No format validation on values
 
-#### Scenario: Valid environment file
+#### Scenario: Valid environment file with both variables
 ```
 Given an environment file containing:
   export ANTHROPIC_BASE_URL="https://api.example.com"
   export ANTHROPIC_AUTH_TOKEN="secret123"
-When the system loads this environment
+When the system validates this environment
 Then it shall accept the configuration as valid
 ```
 
-#### Scenario: Missing base URL
+#### Scenario: Valid environment file with token only
 ```
 Given an environment file containing only:
   export ANTHROPIC_AUTH_TOKEN="secret123"
-When the system loads this environment
-Then it shall reject the configuration with an error message
+When the system validates this environment
+Then it shall accept the configuration as valid
+And note missing optional: ANTHROPIC_BASE_URL
 ```
 
 #### Scenario: Missing auth token
 ```
 Given an environment file containing only:
   export ANTHROPIC_BASE_URL="https://api.example.com"
-When the system loads this environment
-Then it shall reject the configuration with an error message
+When the system validates this environment
+Then it shall reject the configuration with error:
+  Missing required: ANTHROPIC_AUTH_TOKEN
 ```
 
 ### Requirement: ENV-MGMT-004 Environment Loading

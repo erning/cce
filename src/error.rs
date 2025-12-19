@@ -15,8 +15,8 @@ pub enum CceError {
     #[error("Validation failed: {0}")]
     ValidationFailed(String),
 
-    #[error("Claude CLI not found. Please install it first.")]
-    ClaudeNotFound,
+    #[error("Command '{0}' not found. Please ensure it is installed and in PATH.")]
+    CommandNotFound(String),
 
     #[error("Failed to execute command: {0}")]
     ExecutionFailed(String),

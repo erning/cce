@@ -120,30 +120,30 @@ When claude writes to both stdout and stderr
 Then both streams are displayed in real-time without mixing
 ```
 
-### Requirement: EXEC-005 Claude CLI Presence Check
-**Requirement:** The system SHALL verify that the claude CLI is available in PATH before attempting execution.
+### Requirement: EXEC-005 Command Not Found Handling
+**Requirement:** The system SHALL provide clear error messages when the specified command is not found during execution.
 
-**Rationale:** Provides clear error message when claude is not installed, rather than confusing errors.
+**Rationale:** Provides clear error message when the command is not installed, with appropriate exit code.
 
 **Implementation Notes:**
-- Check for claude executable in PATH
-- Use `which claude` or equivalent
-- Provide helpful error message if not found
+- Command availability is checked at execution time (not pre-checked)
+- On Unix: shell reports command not found via exec error
+- On Windows: Command::status() returns NotFound error
+- Exit with code 127 (standard command not found)
 
-#### Scenario: Claude CLI found in PATH
+#### Scenario: Command executes successfully
 ```
-Given "which claude" returns /usr/local/bin/claude
-When system checks for claude
-Then proceed to execution
+Given command "claude" is in PATH
+When system executes the command
+Then proceed with execution
 ```
 
-#### Scenario: Claude CLI not found
+#### Scenario: Command not found at execution
 ```
-Given "which claude" returns no results
+Given command "claude" is not in PATH
 When system attempts to execute
 Then display error:
   Error: 'claude' command not found in PATH
-  Please ensure Claude Code CLI is installed
 And exit with code 127
 ```
 
@@ -176,29 +176,37 @@ Then both commands use the same minimax configuration
 ```
 
 ### Requirement: EXEC-007 Platform-Optimized Command Execution
-**Requirement:** The system SHALL use platform-optimized execution methods to minimize process overhead while maintaining compatibility across operating systems.
+**Requirement:** The system SHALL use platform-optimized execution methods to run the specified command executable, minimizing process overhead while maintaining compatibility across operating systems.
 
-**Rationale:** Process exec replacement on Unix systems eliminates parent process overhead and provides better performance, while maintaining Windows compatibility through subprocess execution.
+**Rationale:** Process exec replacement on Unix systems eliminates parent process overhead and provides better performance, while maintaining Windows compatibility through subprocess execution. Supports configurable command names.
 
 **Implementation Notes:**
+- Accept command name as a parameter (default: "claude")
 - Use `std::os::unix::process::CommandExt::exec()` on Unix systems for process replacement
 - Use `std::process::Command::status()` on Windows systems as fallback
 - Preserve all environment variables and execution context
 - Handle exec failures with appropriate exit codes
 
-#### Scenario: Unix process exec
+#### Scenario: Unix process exec with default command
 - **WHEN** executing on Unix-based systems (Linux, macOS)
-- **THEN** use process exec to replace the current process with Claude
+- **AND** no custom command is specified
+- **THEN** use process exec to replace the current process with "claude"
 - **AND** preserve all environment variables from the loaded configuration
-- **AND** exit with the same code as the exec'd process
 
-#### Scenario: Windows subprocess fallback  
+#### Scenario: Unix process exec with custom command
+- **WHEN** executing on Unix-based systems (Linux, macOS)
+- **AND** custom command "claude-code" is specified
+- **THEN** use process exec to replace the current process with "claude-code"
+- **AND** preserve all environment variables from the loaded configuration
+
+#### Scenario: Windows subprocess with custom command
 - **WHEN** executing on Windows systems
-- **THEN** use subprocess execution as a fallback method
+- **AND** custom command "claude-code" is specified
+- **THEN** use subprocess execution to run "claude-code"
 - **AND** maintain the same functionality as Unix systems
 
 #### Scenario: Command not found handling
-- **WHEN** the Claude command is not found during execution
+- **WHEN** the specified command is not found during execution
 - **THEN** exit with code 127 (standard command not found)
-- **AND** provide appropriate error messaging
+- **AND** provide appropriate error messaging including the command name
 

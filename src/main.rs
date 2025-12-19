@@ -10,11 +10,20 @@ use cce::manager::EnvironmentManager;
 #[derive(Parser, Debug)]
 #[command(name = "cce")]
 #[command(about = "Claude Code Environment Manager")]
-#[command(version, disable_version_flag = true)]
+#[command(version, disable_version_flag = true, disable_help_flag = true)]
 struct Cli {
     /// Print version
     #[arg(long)]
     version: bool,
+
+    /// Print help
+    #[arg(short = 'h', long)]
+    help: bool,
+
+    /// Command executable to run (default: claude)
+    #[arg(short, long, default_value = "claude")]
+    command: String,
+
     /// Environment name
     name: Option<String>,
 
@@ -30,6 +39,11 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    if cli.help {
+        print_help();
+        return Ok(());
+    }
+
     if cli.version {
         println!("cce {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -38,9 +52,16 @@ fn main() -> Result<()> {
     if cli.validate {
         validate_environments(cli.name.as_deref())
     } else if let Some(name) = cli.name {
-        run_environment(&name, &cli.args)
+        // If name starts with '-', treat it as an arg, not an environment name
+        if name.starts_with('-') {
+            let mut args = vec![name];
+            args.extend(cli.args);
+            list_environments(&cli.command, &args)
+        } else {
+            run_environment(&name, &cli.command, &cli.args)
+        }
     } else {
-        list_environments()
+        list_environments(&cli.command, &cli.args)
     }
 }
 
@@ -163,7 +184,21 @@ fn select_environment_fzf(
 
 /// Print usage information
 fn print_usage() {
-    println!("Usage: cce <name> [claude-code arguments...]");
+    println!("Usage: cce [OPTIONS] [NAME] [-- ARGS...]");
+}
+
+/// Print help information
+fn print_help() {
+    println!("Claude Code Environment Manager\n");
+    print_usage();
+    println!("\nArguments:");
+    println!("  [NAME]      Environment name");
+    println!("  [ARGS...]   Arguments to pass to command\n");
+    println!("Options:");
+    println!("  -c, --command <CMD>  Command executable to run [default: claude]");
+    println!("      --validate       Validate environment files");
+    println!("      --version        Print version");
+    println!("  -h, --help           Print help");
 }
 
 /// Print list of environments
@@ -174,7 +209,7 @@ fn print_environments(environments: &[Environment]) {
     }
 }
 
-fn list_environments() -> Result<()> {
+fn list_environments(command: &str, args: &[String]) -> Result<()> {
     let manager = EnvironmentManager::new().map_err(|e| {
         eprintln!("Error: {}", e);
         e
@@ -202,7 +237,7 @@ fn list_environments() -> Result<()> {
     if is_fzf_available() {
         if let Some(selected_env) = select_environment_fzf(&environments)? {
             // User selected an environment, run it
-            run_environment(&selected_env, &Vec::new())
+            run_environment(&selected_env, command, args)
         } else {
             // User cancelled, show list
             print_environments(&environments);
@@ -215,7 +250,7 @@ fn list_environments() -> Result<()> {
     }
 }
 
-fn run_environment(name: &str, args: &[String]) -> Result<()> {
+fn run_environment(name: &str, command: &str, args: &[String]) -> Result<()> {
     let manager = EnvironmentManager::new().map_err(|e| {
         eprintln!("Error: {}", e);
         e
@@ -227,7 +262,7 @@ fn run_environment(name: &str, args: &[String]) -> Result<()> {
     })?;
 
     let exit_code =
-        CommandExecutor::execute(&env_file, args).map_err(|e| {
+        CommandExecutor::execute(&env_file, command, args).map_err(|e| {
             eprintln!("Error executing command: {}", e);
             e
         })?;

@@ -63,32 +63,31 @@ Then return error: "Failed to source environment file: [shell error]"
 ```
 
 ### Requirement: CONF-002 Required Fields Validation
-**Requirement:** The system SHALL validate that required fields `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` are present and non-empty.
+**Requirement:** The system SHALL validate that the required field `ANTHROPIC_AUTH_TOKEN` is present. `ANTHROPIC_BASE_URL` is optional.
 
-**Rationale:** Ensures environment configurations are complete before attempting to use them.
+**Rationale:** Ensures environment configurations have authentication before attempting to use them. Base URL is optional as some providers may use defaults.
 
 **Implementation Notes:**
-- Both fields must be present in the file
-- Values must not be empty strings after trimming
-- URL must be a valid URL format (basic validation)
+- `ANTHROPIC_AUTH_TOKEN` must be present in the file
+- `ANTHROPIC_BASE_URL` is optional (will show as missing optional if not present)
 - Token must be a non-empty string
 
-#### Scenario: Both required fields present
+#### Scenario: Both fields present
 ```
 Given file contains:
   ANTHROPIC_BASE_URL=https://api.example.com
   ANTHROPIC_AUTH_TOKEN=secret123
 When system validates the file
-Then validation passes
+Then validation passes with no warnings
 ```
 
-#### Scenario: Missing ANTHROPIC_BASE_URL
+#### Scenario: Only token present (valid)
 ```
 Given file contains only:
   ANTHROPIC_AUTH_TOKEN=secret123
 When system validates the file
-Then validation fails with error:
-  Missing required field: ANTHROPIC_BASE_URL
+Then validation passes
+And note missing optional: ANTHROPIC_BASE_URL
 ```
 
 #### Scenario: Missing ANTHROPIC_AUTH_TOKEN
@@ -98,16 +97,6 @@ Given file contains only:
 When system validates the file
 Then validation fails with error:
   Missing required field: ANTHROPIC_AUTH_TOKEN
-```
-
-#### Scenario: Empty base URL
-```
-Given file contains:
-  ANTHROPIC_BASE_URL=
-  ANTHROPIC_AUTH_TOKEN=secret123
-When system validates the file
-Then validation fails with error:
-  Field ANTHROPIC_BASE_URL cannot be empty
 ```
 
 #### Scenario: Empty auth token
@@ -120,44 +109,30 @@ Then validation fails with error:
   Field ANTHROPIC_AUTH_TOKEN cannot be empty
 ```
 
-### Requirement: CONF-003 URL Format Validation
-**Requirement:** The system SHALL validate that ANTHROPIC_BASE_URL is a valid URL.
+### Requirement: CONF-003 Variable Presence Check
+**Requirement:** The system SHALL check for the presence of environment variables without validating their format.
 
-**Rationale:** Prevents runtime errors when making API calls with malformed URLs.
+**Rationale:** URL and token format validation is delegated to the underlying command (e.g., claude) at runtime. This keeps the environment manager simple and flexible.
 
 **Implementation Notes:**
-- Must parse as valid URL (scheme + host)
-- Support http and https schemes
-- Reject malformed URLs
+- Check variable name exists in the file
+- Do not validate URL format or token format
+- Format errors will be reported by the underlying command at runtime
 
-#### Scenario: Valid HTTPS URL
+#### Scenario: Variables present
 ```
-Given ANTHROPIC_BASE_URL="https://api.example.com/anthropic"
-When system validates the URL
-Then validation passes
+Given file contains:
+  ANTHROPIC_BASE_URL=https://api.example.com
+  ANTHROPIC_AUTH_TOKEN=secret123
+When system checks variables
+Then report both variables as present
 ```
 
-#### Scenario: Valid HTTP URL
+#### Scenario: Any URL format accepted
 ```
 Given ANTHROPIC_BASE_URL="http://localhost:8080"
-When system validates the URL
-Then validation passes
-```
-
-#### Scenario: Invalid URL (missing scheme)
-```
-Given ANTHROPIC_BASE_URL="api.example.com"
-When system validates the URL
-Then validation fails with error:
-  Invalid URL format for ANTHROPIC_BASE_URL
-```
-
-#### Scenario: Invalid URL (malformed)
-```
-Given ANTHROPIC_BASE_URL="ht!tp://[invalid]"
-When system validates the URL
-Then validation fails with error:
-  Invalid URL format for ANTHROPIC_BASE_URL
+When system checks the file
+Then validation passes (format not checked)
 ```
 
 ### Requirement: CONF-004 Environment File Reading
