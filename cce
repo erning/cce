@@ -33,21 +33,35 @@
 #
 # USAGE:
 # -----
-# 1. List available environments:
+# 1. List available environments (with interactive fzf selection if available):
 #    ./cce
 #
 # 2. Use a specific environment:
-#    ./cce <environment_name> [claude-code arguments...]
+#    ./cce <environment_name> [-- ARGS...]
 #
-# 3. Examples:
-#    ./cce glm --help
-#    ./cce kimi-k2 "Write a Python script"
-#    ./cce minimax-m2 --version
+# 3. Use custom command:
+#    ./cce -c claude-code <environment_name>
+#    ./cce --command echo <environment_name>
+#
+# 4. Validate environments:
+#    ./cce --validate [environment_name]
+#
+# 5. Examples:
+#    ./cce glm -- --help
+#    ./cce kimi-k2 -- "Write a Python script"
+#    ./cce minimax-m2 -- --version
+#
+# OPTIONS:
+# -------
+#   -c, --command <CMD>  Command executable to run [default: claude]
+#       --validate       Validate environment files
+#       --version        Print version
+#   -h, --help           Print help
 #
 # REQUIREMENTS:
 # ------------
 # - Claude Code CLI tool must be installed and accessible as 'claude'
-# - Environment directory: ~/.config/cce/
+# - Environment directory: ~/.config/cce/ or $XDG_CONFIG_HOME/cce/
 # - Valid environment files with proper permissions
 #
 # ERROR HANDLING:
@@ -58,34 +72,234 @@
 #
 # ==============================================================================
 
-ENV_NAME="$1"
-ENV_DIR="$HOME/.config/cce"
-ENV_FILE="$ENV_DIR/${ENV_NAME}.env"
+set -e
 
-if [ -z "$ENV_NAME" ]; then
-  echo "Usage: $(basename $0) <name> [claude-code arguments...]"
-  if [ -d "$ENV_DIR" ]; then
-    for env_file in "$ENV_DIR"/*.env; do
-      if [ -f "$env_file" ]; then
-        echo "  $(basename "$env_file" .env)"
+VERSION="2.0.8"
+
+# Parse arguments
+COMMAND="claude"
+ENV_NAME=""
+VALIDATE=false
+SHOW_HELP=false
+SHOW_VERSION=false
+ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -c|--command)
+      COMMAND="$2"
+      shift 2
+      ;;
+    --validate)
+      VALIDATE=true
+      shift
+      ;;
+    -h|--help)
+      SHOW_HELP=true
+      shift
+      ;;
+    --version)
+      SHOW_VERSION=true
+      shift
+      ;;
+    --)
+      shift
+      ARGS+=("$@")
+      break
+      ;;
+    *)
+      if [[ -z "$ENV_NAME" ]]; then
+        ENV_NAME="$1"
+      else
+        ARGS+=("$1")
       fi
-    done
-    if [ ! -f "$ENV_DIR"/*.env ] 2>/dev/null; then
-      echo "  (no environment found)"
-    fi
-  else
-    echo "  (directory $ENV_DIR does not exist)"
-  fi
-  exit 1
+      shift
+      ;;
+  esac
+done
+
+# Get config directory (XDG_CONFIG_HOME or ~/.config)
+if [[ -n "$XDG_CONFIG_HOME" ]] && [[ -n "$XDG_CONFIG_HOME" ]]; then
+  ENV_DIR="$XDG_CONFIG_HOME/cce"
+else
+  ENV_DIR="$HOME/.config/cce"
 fi
 
-if [ ! -f "$ENV_FILE" ]; then
+# Print version
+if [[ "$SHOW_VERSION" == true ]]; then
+  echo "cce $VERSION"
+  exit 0
+fi
+
+# Print help
+print_help() {
+  echo "Claude Code Environment Manager"
+  echo ""
+  echo "Usage: cce [OPTIONS] [NAME] [-- ARGS...]"
+  echo ""
+  echo "Arguments:"
+  echo "  [NAME]      Environment name"
+  echo "  [ARGS...]   Arguments to pass to command"
+  echo ""
+  echo "Options:"
+  echo "  -c, --command <CMD>  Command executable to run [default: claude]"
+  echo "      --validate       Validate environment files"
+  echo "      --version        Print version"
+  echo "  -h, --help           Print help"
+}
+
+if [[ "$SHOW_HELP" == true ]]; then
+  print_help
+  exit 0
+fi
+
+# List available environments
+list_environments() {
+  echo "Usage: cce [OPTIONS] [NAME] [-- ARGS...]"
+  echo ""
+  echo "Available environments:"
+
+  if [[ -d "$ENV_DIR" ]]; then
+    local env_files=()
+    for env_file in "$ENV_DIR"/*.env; do
+      if [[ -f "$env_file" ]]; then
+        env_files+=("$(basename "$env_file" .env)")
+      fi
+    done
+
+    # Sort environments alphabetically
+    IFS=$'\n' env_files=($(sort <<<"${env_files[*]}"))
+    unset IFS
+
+    if [[ ${#env_files[@]} -eq 0 ]]; then
+      echo "  No environments found."
+      echo ""
+      echo "Create environment files in: $ENV_DIR"
+      if [[ ! -d "$ENV_DIR" ]]; then
+        echo "Directory does not exist yet."
+      fi
+    else
+      for env_name in "${env_files[@]}"; do
+        echo "  $env_name"
+      done
+    fi
+  else
+    echo "  No environments found."
+    echo ""
+    echo "Create environment files in: $ENV_DIR"
+    echo "Directory does not exist yet."
+  fi
+}
+
+# Validate environment file
+validate_environment() {
+  local env_name="$1"
+  local env_file="$ENV_DIR/${env_name}.env"
+
+  if [[ ! -f "$env_file" ]]; then
+    echo "Error: File $env_file not found"
+    exit 1
+  fi
+
+  printf "Validating %s... " "$env_name"
+
+  # Check for required variables
+  local missing_required=()
+  local missing_optional=()
+
+  if ! grep -q "^export ANTHROPIC_AUTH_TOKEN=" "$env_file" && \
+     ! grep -q "^ANTHROPIC_AUTH_TOKEN=" "$env_file"; then
+    missing_required+=("ANTHROPIC_AUTH_TOKEN")
+  fi
+
+  if ! grep -q "^export ANTHROPIC_BASE_URL=" "$env_file" && \
+     ! grep -q "^ANTHROPIC_BASE_URL=" "$env_file"; then
+    missing_optional+=("ANTHROPIC_BASE_URL")
+  fi
+
+  if [[ ${#missing_required[@]} -eq 0 ]]; then
+    echo "OK"
+    if [[ ${#missing_optional[@]} -gt 0 ]]; then
+      echo "  Note: Missing optional vars: ${missing_optional[*]}"
+    fi
+  else
+    echo "INVALID"
+    echo "  Missing required: ${missing_required[*]}"
+    exit 1
+  fi
+}
+
+# Run validate mode
+if [[ "$VALIDATE" == true ]]; then
+  if [[ -n "$ENV_NAME" ]]; then
+    validate_environment "$ENV_NAME"
+  else
+    validated=false
+    if [[ -d "$ENV_DIR" ]]; then
+      for env_file in "$ENV_DIR"/*.env; do
+        if [[ -f "$env_file" ]]; then
+          validated=true
+          validate_environment "$(basename "$env_file" .env)"
+        fi
+      done
+    fi
+
+    if [[ "$validated" == false ]]; then
+      echo "No environments found to validate."
+    fi
+  fi
+  exit 0
+fi
+
+# Check if first arg starts with '-', treat as showing list
+if [[ "$ENV_NAME" == -* ]]; then
+  list_environments
+  exit 0
+fi
+
+# No environment name provided
+if [[ -z "$ENV_NAME" ]]; then
+  env_files=()
+  if [[ -d "$ENV_DIR" ]]; then
+    for env_file in "$ENV_DIR"/*.env; do
+      if [[ -f "$env_file" ]]; then
+        env_files+=("$(basename "$env_file" .env)")
+      fi
+    done
+  fi
+
+  # Sort environments alphabetically
+  IFS=$'\n' env_files=($(sort <<<"${env_files[*]}"))
+  unset IFS
+
+  # Try interactive fzf selection if available
+  if [[ ${#env_files[@]} -gt 0 ]] && command -v fzf &> /dev/null; then
+    selected=$(printf "%s\n" "${env_files[@]}" | fzf) || {
+      # User cancelled (ESC/q), show list
+      list_environments
+      exit 0
+    }
+
+    if [[ -n "$selected" ]]; then
+      ENV_NAME="$selected"
+    else
+      list_environments
+      exit 0
+    fi
+  else
+    list_environments
+    exit 0
+  fi
+fi
+
+# Run environment
+ENV_FILE="$ENV_DIR/${ENV_NAME}.env"
+
+if [[ ! -f "$ENV_FILE" ]]; then
   echo "Error: File $ENV_FILE not found"
   exit 1
 fi
 
-source "$ENV_FILE"
-# echo $ANTHROPIC_BASE_URL
-
-shift
-exec claude "$@"
+# Source the environment file and execute the command
+. "$ENV_FILE"
+exec "$COMMAND" "${ARGS[@]}"
