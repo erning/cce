@@ -11,10 +11,10 @@ CCE is a shell script that allows you to manage multiple Claude Code environment
 
 ## Installation
 
-1. Download the `cce` script to your preferred location (e.g., `/usr/local/bin/` or `~/bin/`):
+1. Download the `cce.sh` script to your preferred location (e.g., `/usr/local/bin/` or `~/bin/`):
 
    ```bash
-   curl -o cce https://raw.githubusercontent.com/erning/cce/refs/heads/master/cce
+   curl -o cce https://raw.githubusercontent.com/erning/cce/refs/heads/master/cce.sh
    chmod +x cce
    ```
 

@@ -119,7 +119,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Get config directory (XDG_CONFIG_HOME or ~/.config)
-if [[ -n "$XDG_CONFIG_HOME" ]] && [[ -n "$XDG_CONFIG_HOME" ]]; then
+if [[ -n "${XDG_CONFIG_HOME:-}" ]] && [[ -n "${XDG_CONFIG_HOME// /}" ]]; then
   ENV_DIR="$XDG_CONFIG_HOME/cce"
 else
   ENV_DIR="$HOME/.config/cce"
@@ -192,13 +192,14 @@ list_environments() {
 }
 
 # Validate environment file
+# Returns 0 if valid, 1 if invalid
 validate_environment() {
   local env_name="$1"
   local env_file="$ENV_DIR/${env_name}.env"
 
   if [[ ! -f "$env_file" ]]; then
-    echo "Error: File $env_file not found"
-    exit 1
+    echo "Validating $env_name... ERROR: File not found"
+    return 1
   fi
 
   printf "Validating %s... " "$env_name"
@@ -218,35 +219,55 @@ validate_environment() {
   fi
 
   if [[ ${#missing_required[@]} -eq 0 ]]; then
-    echo "OK"
+    echo "✓ OK"
     if [[ ${#missing_optional[@]} -gt 0 ]]; then
       echo "  Note: Missing optional vars: ${missing_optional[*]}"
     fi
+    return 0
   else
-    echo "INVALID"
+    echo "✗ INVALID"
     echo "  Missing required: ${missing_required[*]}"
-    exit 1
+    return 1
   fi
 }
 
 # Run validate mode
 if [[ "$VALIDATE" == true ]]; then
+  all_valid=true
   if [[ -n "$ENV_NAME" ]]; then
-    validate_environment "$ENV_NAME"
+    validate_environment "$ENV_NAME" || all_valid=false
   else
     validated=false
     if [[ -d "$ENV_DIR" ]]; then
+      # Sort environment files
+      env_files=()
       for env_file in "$ENV_DIR"/*.env; do
         if [[ -f "$env_file" ]]; then
-          validated=true
-          validate_environment "$(basename "$env_file" .env)"
+          env_files+=("$(basename "$env_file" .env)")
         fi
+      done
+      IFS=$'\n' env_files=($(sort <<<"${env_files[*]}"))
+      unset IFS
+
+      for env_name in "${env_files[@]}"; do
+        validated=true
+        validate_environment "$env_name" || all_valid=false
       done
     fi
 
     if [[ "$validated" == false ]]; then
       echo "No environments found to validate."
+    else
+      echo ""
+      if [[ "$all_valid" == true ]]; then
+        echo "All environments are valid."
+      else
+        echo "Some environments have issues."
+      fi
     fi
+  fi
+  if [[ "$all_valid" == false ]]; then
+    exit 1
   fi
   exit 0
 fi
