@@ -1,10 +1,12 @@
 # cli-interface Specification
 
 ## Purpose
-TBD - created by archiving change reimplement-in-rust. Update Purpose after archive.
+Defines the command-line interface for the CCE (Claude Code Environment) Manager, including argument parsing, environment selection, help/version display, and validation commands.
+
 ## Requirements
-### Requirement: CLI-001 List Environments Subcommand
-**Requirement:** When executed without an environment name argument, the system SHALL attempt to use fzf for interactive environment selection. If fzf is not available or the user cancels the selection, it SHALL list all available environments. Any arguments provided after `--` SHALL be passed to the command after environment selection.
+
+### Requirement: CLI-001 List Environments Command
+**Requirement:** When executed without an environment name argument, the system SHALL attempt to use fzf for interactive environment selection. If fzf is not available or the user cancels the selection, it SHALL list all available environments. Any arguments provided SHALL be passed to the command after environment selection.
 
 **Rationale:** Enhance user experience by allowing interactive selection while maintaining backward compatibility. Allow users to specify command arguments before selecting an environment.
 
@@ -17,200 +19,130 @@ TBD - created by archiving change reimplement-in-rust. Update Purpose after arch
 - Display environments in alphabetical order in fzf
 - If fzf unavailable or selection cancelled, show traditional list view
 - Include helpful usage information
-- Pass any arguments after `--` to the executed command
+- Pass any trailing arguments to the executed command
 
 #### Scenario: Interactive selection with fzf available
-```
-Given fzf is installed and environments "glm" and "kimi" exist
-When user runs "cce" without arguments
-Then display fzf interface for environment selection
-When user navigates to "glm" and presses Enter
-Then load glm environment and execute claude
-```
+- **WHEN** fzf is installed and environments "glm" and "kimi" exist
+- **AND** user runs `cce` without arguments
+- **THEN** display fzf interface for environment selection
+- **WHEN** user navigates to "glm" and presses Enter
+- **THEN** load glm environment and execute claude
 
 #### Scenario: Interactive selection with arguments
-```
-Given fzf is installed and environments "glm" and "kimi" exist
-When user runs "cce -- --help"
-Then display fzf interface for environment selection
-When user navigates to "glm" and presses Enter
-Then load glm environment and execute "claude --help"
-```
+- **WHEN** fzf is installed and environments "glm" and "kimi" exist
+- **AND** user runs `cce -- --help`
+- **THEN** display fzf interface for environment selection
+- **WHEN** user navigates to "glm" and presses Enter
+- **THEN** load glm environment and execute `claude --help`
 
 #### Scenario: Interactive selection with fzf unavailable
-```
-Given fzf is not installed and environments "glm" and "kimi" exist
-When user runs "cce" without arguments
-Then display:
-  Usage: cce <name> [claude-code arguments...]
-    glm
-    kimi
-And exit with code 1
-```
+- **WHEN** fzf is not installed and environments "glm" and "kimi" exist
+- **AND** user runs `cce` without arguments
+- **THEN** display usage and environment list
 
 #### Scenario: User cancels interactive selection
-```
-Given fzf is installed and environments "glm" and "kimi" exist
-When user runs "cce" without arguments
-Then display fzf interface for environment selection
-When user presses ESC or q
-Then display:
-  Usage: cce <name> [claude-code arguments...]
-    glm
-    kimi
-And exit with code 1
-```
+- **WHEN** fzf is installed and environments exist
+- **AND** user runs `cce` without arguments
+- **AND** user presses ESC or q in fzf
+- **THEN** display usage and environment list
 
-#### Scenario: No environments available with fzf
-```
-Given fzf is installed but no environments exist in ~/.config/cce/
-When user runs "cce" without arguments
-Then display:
-  Usage: cce <name> [claude-code arguments...]
-    (no environment found)
-And exit with code 1
-```
+#### Scenario: No environments available
+- **WHEN** no environments exist in config directory
+- **AND** user runs `cce` without arguments
+- **THEN** display usage message with "No environments found"
+- **AND** show config directory path
 
-### Requirement: CLI-002 Run Environment Subcommand
-**Requirement:** The system SHALL execute the claude command with the specified environment's configuration when an environment name is provided.
+### Requirement: CLI-002 Run Environment Command
+**Requirement:** The system SHALL execute the specified command with the selected environment's configuration when an environment name is provided as the first positional argument.
 
-**Rationale:** Core functionality to use a specific environment for claude commands.
+**Rationale:** Core functionality to use a specific environment for command execution.
 
 **Implementation Notes:**
 - Accept environment name as first positional argument
-- Accept zero or more additional arguments to pass through to claude
-- Environment name must be valid (contain only safe characters)
+- Accept zero or more additional arguments to pass through to the command
+- Environment name must not start with `-` (treated as passthrough arg otherwise)
 
 #### Scenario: Execute with environment
-```
-Given environment "glm" exists with valid configuration
-When user runs "cce glm --help"
-Then load glm environment and execute: claude --help
-With environment variables set from glm.env
-```
+- **WHEN** environment "glm" exists with valid configuration
+- **AND** user runs `cce glm --help`
+- **THEN** load glm environment and execute `claude --help`
 
 #### Scenario: Execute with environment and multiple arguments
-```
-Given environment "minimax" exists
-When user runs "cce minimax "explain rust ownership""
-Then load minimax environment and execute: claude "explain rust ownership"
-```
+- **WHEN** environment "minimax" exists
+- **AND** user runs `cce minimax "explain rust ownership"`
+- **THEN** load minimax environment and execute `claude "explain rust ownership"`
 
 #### Scenario: Execute with no additional arguments
-```
-Given environment "kimi" exists
-When user runs "cce kimi"
-Then load kimi environment and execute: claude (with no arguments)
-```
+- **WHEN** environment "kimi" exists
+- **AND** user runs `cce kimi`
+- **THEN** load kimi environment and execute `claude` with no arguments
 
-### Requirement: CLI-003 Help and Usage Information
-**Requirement:** The system SHALL provide clear usage information and help text.
+#### Scenario: Argument starting with dash treated as passthrough
+- **WHEN** user runs `cce --help`
+- **AND** fzf is available
+- **THEN** show fzf selection (since `--help` starts with `-`)
+- **WHEN** user selects an environment
+- **THEN** execute command with `--help` argument
 
-**Rationale:** Improves user experience and reduces confusion about how to use the tool.
+### Requirement: CLI-003 Help and Version Information
+**Requirement:** The system SHALL provide `--help` (or `-h`) and `--version` flags for displaying help text and version information respectively.
 
-**Implementation Notes:**
-- Show usage format in error messages
-- Provide examples of common usage
-- Display available environments when no name provided
-
-#### Scenario: Display usage on missing environment
-```
-When user runs "cce"
-Then show usage message:
-  Usage: cce <name> [claude-code arguments...]
-
-  Available environments:
-    glm
-    kimi
-    minimax
-```
-
-### Requirement: CLI-004 Error Handling for Invalid Inputs
-**Requirement:** The system SHALL provide clear error messages for invalid input and exit with appropriate error codes.
-
-**Rationale:** Helps users understand and fix problems quickly.
+**Rationale:** Standard CLI conventions for user assistance.
 
 **Implementation Notes:**
-- Exit code 1: General error (missing environment, invalid input)
-- Exit code 2: Usage error (invalid command-line usage)
-- Exit code 127: Command not found (claude CLI not in PATH)
-- Clear, actionable error messages
+- `--help` / `-h` displays usage, arguments, and options
+- `--version` displays package version from Cargo.toml
+- These flags are processed before environment logic
 
-#### Scenario: Environment file not found
-```
-Given no environment named "invalid" exists
-When user runs "cce invalid"
-Then display error:
-  Error: File ~/.config/cce/invalid.env not found
-And exit with code 1
-```
+#### Scenario: Display help
+- **WHEN** user runs `cce --help` or `cce -h`
+- **THEN** display help text with usage, arguments, and options
 
-#### Scenario: Config directory does not exist
-```
-Given ~/.config/cce/ does not exist
-When user runs "cce"
-Then display:
-  Usage: cce <name> [claude-code arguments...]
-    (directory ~/.config/cce/ does not exist)
-And exit with code 1
-```
+#### Scenario: Display version
+- **WHEN** user runs `cce --version`
+- **THEN** display `cce {version}` from package metadata
 
-### Requirement: CLI-005 Pass-Through Arguments
-**Requirement:** The system SHALL pass all arguments after the environment name directly to the claude command.
+### Requirement: CLI-004 Environment Validation Command
+**Requirement:** The system SHALL provide a `--validate` flag that validates environment files without executing any command.
 
-**Rationale:** Allows full flexibility in using claude with different commands and options.
+**Rationale:** Allows users to check their environment configurations for errors before use.
 
 **Implementation Notes:**
-- Preserve argument order
-- Support quoted arguments
-- Support arguments with special characters
-- Support empty arguments (no arguments after environment name)
+- `--validate` without environment name validates all environments
+- `--validate` with environment name validates only that environment
+- Display validation status for each environment (OK, INVALID, ERROR)
+- Report missing required and optional variables
+- Exit with code 1 if any validation fails
 
-#### Scenario: Pass complex arguments
-```
-When user runs: cce glm "write a function" --output file.txt
-Then execute: claude "write a function" --output file.txt
-With glm environment variables set
-```
+#### Scenario: Validate all environments
+- **WHEN** user runs `cce --validate`
+- **THEN** validate each environment file in config directory
+- **AND** display status for each (e.g., "glm... OK", "kimi... INVALID")
 
-#### Scenario: Pass arguments with quotes
-```
-When user runs: cce minimax 'echo "hello world"'
-Then execute: claude 'echo "hello world"'
-```
+#### Scenario: Validate specific environment
+- **WHEN** user runs `cce --validate glm`
+- **THEN** validate only the "glm" environment
+- **AND** display validation result
 
-### Requirement: CLI-006 Positional Argument Structure
-**Requirement:** The CLI SHALL use positional arguments for environment selection, with optional flags for configuration.
+#### Scenario: Validation shows missing optional
+- **WHEN** environment has ANTHROPIC_AUTH_TOKEN but no ANTHROPIC_BASE_URL
+- **AND** user runs `cce --validate`
+- **THEN** show "OK" with note about missing optional variable
 
-**Rationale:** Simple and intuitive CLI design. Environment name as first positional argument, remaining arguments passed to the command.
+#### Scenario: Validation fails for missing required
+- **WHEN** environment lacks ANTHROPIC_AUTH_TOKEN
+- **AND** user runs `cce --validate`
+- **THEN** show "INVALID" with missing required variable listed
+- **AND** exit with code 1
 
-**Implementation Notes:**
-- First positional argument is the environment name (optional)
-- If no environment name, show fzf selection or list
-- If argument starts with `-`, treat as args for passthrough (not environment name)
-- Remaining arguments after environment name passed to command
-
-#### Scenario: Environment as positional argument
-```
-Given environment "glm" exists
-When user runs: cce glm --help
-Then load glm environment and execute: claude --help
-```
-
-#### Scenario: No arguments shows selection/list
-```
-When user runs: cce
-Then show fzf selection (if available) or list environments
-```
-
-### Requirement: CLI-007 Configurable Command Executable
+### Requirement: CLI-005 Configurable Command Executable
 **Requirement:** The system SHALL accept an optional `--command` (or `-c`) parameter to specify the executable name to run, with a default value of "claude".
 
 **Rationale:** Allows users to use alternative executables (e.g., `claude-code`, custom wrapper scripts) while maintaining backward compatibility.
 
 **Implementation Notes:**
-- Add `--command` / `-c` as a global option in the CLI struct
-- Default value is "claude" to maintain backward compatibility
+- Add `--command` / `-c` as a global option
+- Default value is "claude" for backward compatibility
 - The parameter value is passed to the command executor
 - Works with both direct environment execution and fzf selection
 
@@ -233,3 +165,43 @@ Then show fzf selection (if available) or list environments
 - **WHEN** user selects an environment
 - **THEN** execute `claude-code` with the selected environment
 
+### Requirement: CLI-006 Pass-Through Arguments
+**Requirement:** The system SHALL pass all arguments after the environment name directly to the command unchanged.
+
+**Rationale:** Allows full flexibility in using the underlying command with various options.
+
+**Implementation Notes:**
+- Preserve argument order
+- Support quoted arguments
+- Support arguments with special characters
+- Support arguments starting with `-` after environment name
+
+#### Scenario: Pass complex arguments
+- **WHEN** user runs `cce glm "write a function" --output file.txt`
+- **THEN** execute `claude "write a function" --output file.txt`
+
+#### Scenario: Pass arguments with quotes
+- **WHEN** user runs `cce minimax 'echo "hello world"'`
+- **THEN** execute `claude 'echo "hello world"'`
+
+### Requirement: CLI-007 Error Handling
+**Requirement:** The system SHALL provide clear error messages for invalid input and exit with appropriate error codes.
+
+**Rationale:** Helps users understand and fix problems quickly.
+
+**Implementation Notes:**
+- Exit code 0: Success
+- Exit code 1: General error (missing environment, validation failure)
+- Exit code 127: Command not found
+- Clear, actionable error messages
+
+#### Scenario: Environment file not found
+- **WHEN** no environment named "invalid" exists
+- **AND** user runs `cce invalid`
+- **THEN** display error with file path
+- **AND** exit with code 1
+
+#### Scenario: Config directory does not exist
+- **WHEN** config directory does not exist
+- **AND** user runs `cce`
+- **THEN** display usage with note about missing directory

@@ -1,50 +1,66 @@
 # Project Context
 
 ## Purpose
-CCE (Claude Code Environment) Manager is a shell script that allows you to manage multiple Claude Code environments with different API configurations. It enables easy switching between different API providers (GLM, Kimi, Minimax) and authentication tokens without having to manually set environment variables each time.
+CCE (Claude Code Environment) Manager is a CLI tool that allows you to manage multiple Claude Code environments with different API configurations. It enables easy switching between different API providers (GLM, Kimi, Minimax) and authentication tokens without having to manually set environment variables each time.
 
 ## Tech Stack
-- **Shell**: Bash (bourne again shell)
-- **Tools**: Standard Unix utilities (mkdir, basename, source, exec)
+- **Language**: Rust (Edition 2021)
+- **CLI Framework**: clap 4.x with derive macros
+- **Error Handling**: thiserror for custom error types
+- **Testing**: tempfile for file system testing
 - **Configuration**: Environment files (.env format) in `~/.config/cce/`
-- **Dependencies**: None - pure bash script with no external dependencies
-- **Requirements**: Claude Code CLI tool must be installed and accessible as `claude`
+- **Build**: Cargo with release profile optimization (LTO, single codegen unit)
+- **Requirements**: Claude Code CLI tool must be installed and accessible as `claude` (or custom command via `-c` flag)
+
+## Project Structure
+```
+src/
+├── main.rs       # CLI entry point, argument parsing, orchestration
+├── lib.rs        # Library exports
+├── config.rs     # Environment struct, validation logic
+├── manager.rs    # EnvironmentManager for file discovery and loading
+├── executor.rs   # CommandExecutor for shell-based execution
+└── error.rs      # CceError enum with thiserror derives
+```
 
 ## Project Conventions
 
 ### Code Style
-- Use bash shebang `#!/bin/bash`
-- Include comprehensive header comments with OVERVIEW, USE CASES, CONFIGURATION, USAGE, REQUIREMENTS, and ERROR HANDLING
-- Use meaningful variable names: `ENV_NAME`, `ENV_DIR`, `ENV_FILE`
-- Use `$(basename $0)` for script name references
-- Use `source` for loading environment files
-- Use `exec claude "$@"` to pass all arguments through to claude
+- **Imports**: Group by standard library -> external crates -> local modules
+- **Naming**: snake_case for functions/variables, PascalCase for types
+- **Error Handling**: Use `Result<T, CceError>` with `?` propagation
+- **Documentation**: `///` doc comments for public items
+- **Testing**: `#[cfg(test)]` modules with tempfile for file system tests
 
 ### Architecture Patterns
-- **Single Responsibility**: One script, one purpose - environment management
-- **Configuration-Driven**: Environment files in `~/.config/cce/<name>.env`
-- **Pass-Through Pattern**: Pass all non-environment arguments directly to claude command
-- **Fail-Fast**: Check for required conditions early and exit with error codes
-- **List Before Execute**: When no environment specified, list available options
+- **Single Responsibility**: Each module handles one concern (config, manager, executor, error)
+- **XDG Base Directory**: Configuration in `$XDG_CONFIG_HOME/cce/` or `$HOME/.config/cce/`
+- **Shell Source Execution**: Environment files executed via shell `source` command for full shell syntax support
+- **Process Replacement**: Unix exec() for minimal overhead, Windows fallback for compatibility
+- **Interactive Selection**: fzf integration for environment selection when available
+
+### Command Execution Model
+The executor uses shell source to load environment files:
+```rust
+// Shell command pattern
+". '{env_file}' && exec {command} {args}"
+```
+This approach:
+- Supports full shell syntax (variables, command substitution, conditionals)
+- Preserves environment file compatibility with bash scripts
+- Uses exec for process replacement on Unix (minimal overhead)
+- Falls back to subprocess on Windows with env file parsing
 
 ### Testing Strategy
-- **Manual Testing**: Test with different environment files
-- **Error Handling**: Verify error messages for:
-  - Missing environment directory
-  - Missing environment file
-  - Invalid environment file format
-- **Functional Testing**: Test with actual claude commands using different providers
-- **Cross-Platform**: Test on different Unix-like systems (Linux, macOS)
+- **Unit Tests**: In-module `#[cfg(test)]` blocks
+- **File System Tests**: Use `tempfile` crate for isolated testing
+- **Validation Tests**: Test env file parsing and validation
+- **Run Tests**: `cargo test` or `cargo test <test_name>`
 
 ### Git Workflow
 - **Branching**: Simple linear history, main branch for production
-- **Commit Messages**:
-  - Use imperative mood ("Fix cce download URL" not "Fixed cce download URL")
-  - Include change scope when relevant
-  - Keep commits focused and atomic
-- **Recent Commits**:
-  - `031bbab` - Fix cce download URL and update license to MIT
-  - `386c2ae` - Initial implementation of CCE Manager
+- **Commit Messages**: Imperative mood, focused and atomic
+- **OpenSpec**: Use openspec workflow for significant changes
 
 ## Domain Context
 - **API Provider Management**: Supports multiple Claude API-compatible providers
@@ -57,18 +73,17 @@ CCE (Claude Code Environment) Manager is a shell script that allows you to manag
   - Maintaining dev/prod environment separation
 
 ## Important Constraints
-- Requires Claude Code CLI tool to be installed and in PATH
+- Requires Claude Code CLI tool to be installed and in PATH (or custom command)
 - Environment files must use `.env` extension
-- Environment files must contain valid `export` statements for `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`
-- Pure bash implementation - no dependencies on Python, Node.js, or other runtimes
-- Must work on standard Unix-like systems (Linux, macOS)
-- Configuration directory fixed at `~/.config/cce/`
+- Environment files must contain `ANTHROPIC_AUTH_TOKEN` (required)
+- `ANTHROPIC_BASE_URL` is optional
+- Configuration directory follows XDG spec: `$XDG_CONFIG_HOME/cce/` or `~/.config/cce/`
+- Unix-optimized with Windows fallback support
 
 ## External Dependencies
-- **Claude Code CLI**: Primary dependency - the script wraps this tool
-- **Unix Utilities**: Standard bash and Unix tools (mkdir, basename, source, exec)
+- **Claude Code CLI**: Primary dependency - the tool wraps this command
+- **fzf** (optional): For interactive environment selection
 - **API Providers**:
   - GLM (BigModel): https://open.bigmodel.cn/api/anthropic
   - Kimi (Moonshot AI)
   - Minimax
-- **No Build Tools**: Script is executable as-is, no compilation or build process required

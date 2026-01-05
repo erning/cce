@@ -1,212 +1,157 @@
 # command-execution Specification
 
 ## Purpose
-TBD - created by archiving change reimplement-in-rust. Update Purpose after archive.
-## Requirements
-### Requirement: EXEC-001 Environment Variable Setup
-**Requirement:** The system SHALL set `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` environment variables before executing the claude command.
+Defines how CCE executes commands with environment configurations loaded. The system uses shell source to load environment files and exec/subprocess to run the target command.
 
-**Rationale:** Core functionality to apply environment configuration to the claude CLI execution context.
+## Requirements
+
+### Requirement: EXEC-001 Shell Source Execution Model
+**Requirement:** The system SHALL execute environment files using shell source command followed by exec to run the target command with those environment variables.
+
+**Rationale:** Shell source provides full compatibility with shell syntax in environment files, including variable expansion, command substitution, and conditionals.
 
 **Implementation Notes:**
-- Set variables in the child process environment, not parent
-- Clear any existing values for these variables
-- Variables persist for the duration of the claude command execution
+- Build shell command: `. '{env_file}' && exec {command} {args}`
+- Escape single quotes in file path for shell safety
+- Use `/bin/sh -c` to execute the shell command
+- Shell handles all environment variable setup
 
-#### Scenario: Execute with environment variables
-```
-Given environment "glm" with:
-  ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic"
-  ANTHROPIC_AUTH_TOKEN="glm_secret_123"
-When user runs: cce glm --help
-Then execute claude with:
-  ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic"
-  ANTHROPIC_AUTH_TOKEN="glm_secret_123"
-```
+#### Scenario: Execute with environment via shell
+- **WHEN** environment file `/path/to/glm.env` is loaded
+- **AND** command is "claude" with args "--help"
+- **THEN** execute shell command: `. '/path/to/glm.env' && exec claude --help`
 
-### Requirement: EXEC-002 Command Passthrough
-**Requirement:** The system SHALL pass all arguments (except the environment name) directly to the claude command unchanged.
+#### Scenario: File path with special characters
+- **WHEN** environment file path contains single quotes
+- **THEN** escape single quotes properly for shell
 
-**Rationale:** Maintains full compatibility with claude CLI and its various options and commands.
+### Requirement: EXEC-002 Unix Process Replacement
+**Requirement:** On Unix systems, the system SHALL use process exec to replace the current process with the target command.
+
+**Rationale:** Process replacement eliminates parent process overhead and provides clean process hierarchy.
+
+**Implementation Notes:**
+- Use `std::os::unix::process::CommandExt::exec()` on Unix
+- exec() replaces the current process, never returns on success
+- Handle exec failure with appropriate exit codes
+- Exit code 127 for command not found
+
+#### Scenario: Successful process replacement
+- **WHEN** executing on Unix (Linux, macOS)
+- **AND** command exists and is executable
+- **THEN** replace current process with the command
+- **AND** preserve all environment variables
+
+#### Scenario: Command not found
+- **WHEN** the command is not in PATH
+- **AND** exec fails with NotFound error
+- **THEN** exit with code 127
+
+#### Scenario: Other execution errors
+- **WHEN** exec fails for other reasons
+- **THEN** exit with code 1
+- **AND** display error message
+
+### Requirement: EXEC-003 Windows Subprocess Fallback
+**Requirement:** On Windows systems, the system SHALL parse environment files and run commands as subprocesses.
+
+**Rationale:** Windows does not support Unix exec(), so subprocess execution with manual environment setup is required.
+
+**Implementation Notes:**
+- Parse environment file to extract KEY=VALUE pairs
+- Support both `export KEY=VALUE` and `KEY=VALUE` formats
+- Handle quoted values (single and double quotes)
+- Set environment variables on the child process
+- Return exit code from subprocess
+
+#### Scenario: Windows execution
+- **WHEN** executing on Windows
+- **AND** environment file contains variables
+- **THEN** parse file and set environment variables
+- **AND** spawn subprocess with those variables
+- **AND** return subprocess exit code
+
+#### Scenario: Parse quoted values
+- **WHEN** environment file contains `KEY="value with spaces"`
+- **THEN** extract value without quotes: `value with spaces`
+
+### Requirement: EXEC-004 Command Passthrough
+**Requirement:** The system SHALL pass all provided arguments directly to the target command unchanged.
+
+**Rationale:** Maintains full compatibility with the underlying command and its options.
 
 **Implementation Notes:**
 - Preserve argument order
-- Preserve argument quoting
-- Support any number of arguments (including zero)
-- Support special characters in arguments
+- Join arguments with spaces for shell command
+- Shell handles quote preservation and special characters
 
-#### Scenario: Simple argument passthrough
-```
-When user runs: cce glm "explain rust ownership"
-Then execute: claude "explain rust ownership"
-```
+#### Scenario: Simple arguments
+- **WHEN** args are `["--help"]`
+- **THEN** command receives `--help`
 
-#### Scenario: Multiple arguments with flags
-```
-When user runs: cce minimax --model mini-max-latest --output file.txt
-Then execute: claude --model mini-max-latest --output file.txt
-```
+#### Scenario: Multiple arguments
+- **WHEN** args are `["--model", "claude-3", "--output", "file.txt"]`
+- **THEN** command receives all arguments in order
 
-#### Scenario: No additional arguments
-```
-When user runs: cce kimi
-Then execute: claude (with no arguments)
-```
+#### Scenario: No arguments
+- **WHEN** args are empty
+- **THEN** command is executed with no arguments
 
-#### Scenario: Arguments with special characters
-```
-When user runs: cce glm 'echo "hello $WORLD"'
-Then execute: claude 'echo "hello $WORLD"'
-With single quotes preserved
-```
+### Requirement: EXEC-005 Exit Code Propagation
+**Requirement:** The system SHALL propagate the exit code from the executed command to the caller.
 
-### Requirement: EXEC-003 Exit Code Propagation
-**Requirement:** The system SHALL propagate the exit code from the claude command to the caller.
-
-**Rationale:** Allows scripts and users to detect failures in claude commands.
+**Rationale:** Allows scripts and users to detect command success or failure.
 
 **Implementation Notes:**
-- Pass through zero exit codes (success)
-- Pass through non-zero exit codes (errors)
-- Do not modify the exit code
+- On Unix with exec: current process is replaced, exit code is automatic
+- On Windows: capture subprocess exit code and call exit()
+- Exit code 127 for command not found
+- Exit code 1 for other errors
 
-#### Scenario: Successful execution
-```
-Given claude command exits with code 0
-When system executes the command
-Then system exits with code 0
-```
+#### Scenario: Successful command
+- **WHEN** command exits with code 0
+- **THEN** system exits with code 0
 
-#### Scenario: Failed execution
-```
-Given claude command exits with code 1
-When system executes the command
-Then system exits with code 1
-```
+#### Scenario: Failed command
+- **WHEN** command exits with non-zero code
+- **THEN** system exits with same code
 
-#### Scenario: Permission error
-```
-Given claude command exits with code 126
-When system executes the command
-Then system exits with code 126
-```
+#### Scenario: Command not found
+- **WHEN** command is not found
+- **THEN** system exits with code 127
 
-### Requirement: EXEC-004 Standard Streams Handling
-**Requirement:** The system SHALL connect stdout and stderr from the claude command directly to the user's terminal.
+### Requirement: EXEC-006 Standard Streams
+**Requirement:** The system SHALL connect stdout and stderr from the command directly to the user's terminal.
 
-**Rationale:** Provides transparent interaction with claude CLI, showing all output in real-time.
+**Rationale:** Provides transparent interaction with the command, showing all output in real-time.
 
 **Implementation Notes:**
-- Stream stdout directly to parent's stdout
-- Stream stderr directly to parent's stderr
-- Do not buffer or modify output
-- Maintain line buffering for interactive use
+- On Unix with exec: streams are inherited automatically
+- On Windows subprocess: inherit parent's stdio handles
+- No buffering or modification of output
 
-#### Scenario: Command produces stdout
-```
-When claude outputs "Hello, Claude!" to stdout
-Then user sees "Hello, Claude!" immediately
-```
+#### Scenario: Command output
+- **WHEN** command writes to stdout
+- **THEN** user sees output immediately
 
-#### Scenario: Command produces stderr
-```
-When claude writes "Warning: Using deprecated feature" to stderr
-Then user sees "Warning: Using deprecated feature" immediately
-```
+#### Scenario: Command errors
+- **WHEN** command writes to stderr
+- **THEN** user sees errors immediately
 
-#### Scenario: Mixed output
-```
-When claude writes to both stdout and stderr
-Then both streams are displayed in real-time without mixing
-```
+### Requirement: EXEC-007 Configurable Command Name
+**Requirement:** The system SHALL accept a configurable command name, defaulting to "claude".
 
-### Requirement: EXEC-005 Command Not Found Handling
-**Requirement:** The system SHALL provide clear error messages when the specified command is not found during execution.
-
-**Rationale:** Provides clear error message when the command is not installed, with appropriate exit code.
+**Rationale:** Allows users to use alternative executables while maintaining backward compatibility.
 
 **Implementation Notes:**
-- Command availability is checked at execution time (not pre-checked)
-- On Unix: shell reports command not found via exec error
-- On Windows: Command::status() returns NotFound error
-- Exit with code 127 (standard command not found)
+- Command name is passed from CLI layer
+- Default is "claude"
+- Used in shell command construction
 
-#### Scenario: Command executes successfully
-```
-Given command "claude" is in PATH
-When system executes the command
-Then proceed with execution
-```
+#### Scenario: Default command
+- **WHEN** no custom command specified
+- **THEN** use "claude" as the command
 
-#### Scenario: Command not found at execution
-```
-Given command "claude" is not in PATH
-When system attempts to execute
-Then display error:
-  Error: 'claude' command not found in PATH
-And exit with code 127
-```
-
-### Requirement: EXEC-006 Multiple Environment Support
-**Requirement:** The system SHALL correctly load and apply different environment configurations for different execution requests.
-
-**Rationale:** Core functionality to switch between different API providers and accounts.
-
-**Implementation Notes:**
-- Load fresh configuration for each execution
-- Do not persist environment variables between invocations
-- Allow switching environments in rapid succession
-
-#### Scenario: Sequential environment usage
-```
-Given environments "glm" and "kimi" exist
-When user runs: cce glm --version
-Then execute with glm configuration
-
-When user runs: cce kimi --version
-Then execute with kimi configuration
-```
-
-#### Scenario: Same environment multiple times
-```
-Given environment "minimax" exists
-When user runs: cce minimax command1
-And then runs: cce minimax command2
-Then both commands use the same minimax configuration
-```
-
-### Requirement: EXEC-007 Platform-Optimized Command Execution
-**Requirement:** The system SHALL use platform-optimized execution methods to run the specified command executable, minimizing process overhead while maintaining compatibility across operating systems.
-
-**Rationale:** Process exec replacement on Unix systems eliminates parent process overhead and provides better performance, while maintaining Windows compatibility through subprocess execution. Supports configurable command names.
-
-**Implementation Notes:**
-- Accept command name as a parameter (default: "claude")
-- Use `std::os::unix::process::CommandExt::exec()` on Unix systems for process replacement
-- Use `std::process::Command::status()` on Windows systems as fallback
-- Preserve all environment variables and execution context
-- Handle exec failures with appropriate exit codes
-
-#### Scenario: Unix process exec with default command
-- **WHEN** executing on Unix-based systems (Linux, macOS)
-- **AND** no custom command is specified
-- **THEN** use process exec to replace the current process with "claude"
-- **AND** preserve all environment variables from the loaded configuration
-
-#### Scenario: Unix process exec with custom command
-- **WHEN** executing on Unix-based systems (Linux, macOS)
-- **AND** custom command "claude-code" is specified
-- **THEN** use process exec to replace the current process with "claude-code"
-- **AND** preserve all environment variables from the loaded configuration
-
-#### Scenario: Windows subprocess with custom command
-- **WHEN** executing on Windows systems
-- **AND** custom command "claude-code" is specified
-- **THEN** use subprocess execution to run "claude-code"
-- **AND** maintain the same functionality as Unix systems
-
-#### Scenario: Command not found handling
-- **WHEN** the specified command is not found during execution
-- **THEN** exit with code 127 (standard command not found)
-- **AND** provide appropriate error messaging including the command name
-
+#### Scenario: Custom command
+- **WHEN** custom command "claude-code" is specified
+- **THEN** use "claude-code" in shell command

@@ -1,105 +1,136 @@
 # environment-management Specification
 
 ## Purpose
-TBD - created by archiving change reimplement-in-rust. Update Purpose after archive.
-## Requirements
-### Requirement: ENV-MGMT-001 Environment Configuration Storage
-**Requirement:** The system SHALL store environment configurations as individual `.env` files in the user's config directory (`~/.config/cce/`).
+Defines how CCE manages environment configurations, including storage, discovery, loading, and validation of environment files.
 
-**Rationale:** Maintains backward compatibility with bash implementation while providing organized storage.
+## Requirements
+
+### Requirement: ENV-001 Environment Configuration Storage
+**Requirement:** The system SHALL store environment configurations as individual `.env` files in the user's XDG-compliant config directory.
+
+**Rationale:** Provides organized, discoverable storage following platform conventions.
 
 **Implementation Notes:**
-- Directory: `~/.config/cce/` on Unix-like systems
+- Primary directory: `$XDG_CONFIG_HOME/cce/` or `~/.config/cce/`
 - File naming: `<environment_name>.env`
-- Format: Standard .env format with `export KEY=value` statements
+- Format: Shell-compatible .env with `export KEY=VALUE` or `KEY=VALUE`
 
 #### Scenario: Environment file storage
-```
-Given the config directory ~/.config/cce/ exists
-When a user creates a file named "glm.env" with ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN
-Then the system shall recognize "glm" as a valid environment name
-```
+- **WHEN** user creates `~/.config/cce/glm.env`
+- **THEN** system recognizes "glm" as an environment name
 
-### Requirement: ENV-MGMT-002 Environment Discovery
+#### Scenario: Multiple environments
+- **WHEN** config directory contains `glm.env`, `kimi.env`, `minimax.env`
+- **THEN** system recognizes three environments
+
+### Requirement: ENV-002 Environment Discovery
 **Requirement:** The system SHALL scan the config directory and identify all available environment files with `.env` extension.
 
-**Rationale:** Enables users to see what environments are available without specifying a particular one.
+**Rationale:** Enables users to see available environments without prior knowledge.
 
 **Implementation Notes:**
-- Must handle empty directories gracefully
-- Ignore non-.env files
-- Sort environment names alphabetically for consistent output
+- Scan directory for files with `.env` extension
+- Extract environment name from filename (strip `.env` suffix)
+- Sort alphabetically for consistent output
+- Handle empty directories gracefully
 
-#### Scenario: Listing available environments
-```
-Given environments "glm", "kimi", and "minimax" exist in ~/.config/cce/
-When the user runs "cce" without arguments
-Then the system shall display:
-  glm
-  kimi
-  minimax
-```
+#### Scenario: List environments
+- **WHEN** config directory contains environments
+- **THEN** return sorted list of environment names
 
-#### Scenario: Empty environment directory
-```
-Given no .env files exist in ~/.config/cce/
-When the user runs "cce" without arguments
-Then the system shall display "(no environment found)"
-```
+#### Scenario: Empty directory
+- **WHEN** config directory has no .env files
+- **THEN** return empty list
 
-### Requirement: ENV-MGMT-003 Environment Validation
-**Requirement:** The system SHALL validate that each environment file contains the required variable `ANTHROPIC_AUTH_TOKEN`. `ANTHROPIC_BASE_URL` is optional.
+#### Scenario: Directory does not exist
+- **WHEN** config directory does not exist
+- **THEN** return empty list (not an error)
 
-**Rationale:** Ensures authentication is configured. Base URL is optional as some providers may use defaults.
+### Requirement: ENV-003 Environment Validation
+**Requirement:** The system SHALL validate that each environment file contains the required variable `ANTHROPIC_AUTH_TOKEN`.
+
+**Rationale:** Ensures configurations have necessary authentication before use.
 
 **Implementation Notes:**
-- `ANTHROPIC_AUTH_TOKEN` must be present and non-empty
-- `ANTHROPIC_BASE_URL` is optional (noted as missing optional if absent)
-- No format validation on values
+- Required: `ANTHROPIC_AUTH_TOKEN`
+- Optional: `ANTHROPIC_BASE_URL`
+- Parse file to check variable presence
+- Report missing required and optional variables separately
 
-#### Scenario: Valid environment file with both variables
-```
-Given an environment file containing:
-  export ANTHROPIC_BASE_URL="https://api.example.com"
-  export ANTHROPIC_AUTH_TOKEN="secret123"
-When the system validates this environment
-Then it shall accept the configuration as valid
-```
+#### Scenario: Valid with all variables
+- **WHEN** file contains both ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL
+- **THEN** validation passes with no warnings
 
-#### Scenario: Valid environment file with token only
-```
-Given an environment file containing only:
-  export ANTHROPIC_AUTH_TOKEN="secret123"
-When the system validates this environment
-Then it shall accept the configuration as valid
-And note missing optional: ANTHROPIC_BASE_URL
-```
+#### Scenario: Valid with required only
+- **WHEN** file contains only ANTHROPIC_AUTH_TOKEN
+- **THEN** validation passes
+- **AND** note: missing optional ANTHROPIC_BASE_URL
 
-#### Scenario: Missing auth token
-```
-Given an environment file containing only:
-  export ANTHROPIC_BASE_URL="https://api.example.com"
-When the system validates this environment
-Then it shall reject the configuration with error:
-  Missing required: ANTHROPIC_AUTH_TOKEN
-```
+#### Scenario: Invalid missing required
+- **WHEN** file lacks ANTHROPIC_AUTH_TOKEN
+- **THEN** validation fails
+- **AND** report: missing required ANTHROPIC_AUTH_TOKEN
 
-### Requirement: ENV-MGMT-004 Environment Loading
-**Requirement:** The system SHALL load environment configuration from a specified environment file and make it available for command execution.
+### Requirement: ENV-004 Environment Loading
+**Requirement:** The system SHALL load environment configuration by providing the file path to the command executor.
 
-**Rationale:** Core functionality to apply environment settings before running claude commands.
+**Rationale:** Separates concerns between environment management and command execution.
 
 **Implementation Notes:**
-- Parse .env file format
-- Extract environment variables
-- Make them available to child process
+- Verify file exists before loading
+- Return file path for executor to use
+- Handle missing files with clear error messages
 
-#### Scenario: Loading valid environment
-```
-Given an environment named "glm" exists with valid configuration
-When the user runs "cce glm --help"
-Then the system shall load the glm environment and execute claude with those variables set
-```
+#### Scenario: Load existing environment
+- **WHEN** environment "glm" exists
+- **AND** user requests to load it
+- **THEN** return path to glm.env file
 
-All requirements in this capability are new implementations of existing functionality from the Bash version.
+#### Scenario: Load missing environment
+- **WHEN** environment "invalid" does not exist
+- **AND** user requests to load it
+- **THEN** return error with file path
 
+### Requirement: ENV-005 Environment Data Structure
+**Requirement:** The system SHALL represent environments with name and file path for efficient management.
+
+**Rationale:** Minimal data structure focuses on what's needed for file-based execution model.
+
+**Implementation Notes:**
+- Environment struct contains: name (String), file_path (PathBuf)
+- Created from file path during discovery
+- Validation performed on-demand from file content
+
+#### Scenario: Create environment from file
+- **WHEN** file `~/.config/cce/glm.env` is discovered
+- **THEN** create Environment with name="glm" and file_path pointing to file
+
+### Requirement: ENV-006 EnvironmentManager Interface
+**Requirement:** The system SHALL provide an EnvironmentManager that handles all environment operations.
+
+**Rationale:** Centralizes environment operations for consistent behavior.
+
+**Implementation Notes:**
+- `new()`: Create manager with XDG-compliant config directory
+- `config_dir()`: Return the config directory path
+- `list_environments()`: Return all discovered environments
+- `get_environment_file(name)`: Get file path for named environment
+- `load_environment(name)`: Load environment by name
+
+#### Scenario: Create manager
+- **WHEN** EnvironmentManager::new() is called
+- **THEN** manager is created with appropriate config directory
+
+#### Scenario: List all environments
+- **WHEN** manager.list_environments() is called
+- **THEN** return sorted Vec of Environment structs
+
+#### Scenario: Get environment file
+- **WHEN** manager.get_environment_file("glm") is called
+- **AND** glm.env exists
+- **THEN** return path to glm.env
+
+#### Scenario: Get missing environment file
+- **WHEN** manager.get_environment_file("invalid") is called
+- **AND** invalid.env does not exist
+- **THEN** return MissingFile error
