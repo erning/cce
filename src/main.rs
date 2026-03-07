@@ -36,7 +36,14 @@ struct Cli {
     args: Vec<String>,
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     if cli.help {
@@ -67,10 +74,7 @@ fn main() -> Result<()> {
 
 /// Validate environment files
 fn validate_environments(name: Option<&str>) -> Result<()> {
-    let manager = EnvironmentManager::new().map_err(|e| {
-        eprintln!("Error: {}", e);
-        e
-    })?;
+    let manager = EnvironmentManager::new()?;
 
     let environments = if let Some(name) = name {
         vec![manager.load_environment(name)?]
@@ -195,7 +199,9 @@ fn print_help() {
     println!("  [NAME]      Environment name");
     println!("  [ARGS...]   Arguments to pass to command\n");
     println!("Options:");
-    println!("  -c, --command <CMD>  Command executable to run [default: claude]");
+    println!(
+        "  -c, --command <CMD>  Command executable to run [default: claude]"
+    );
     println!("      --validate       Validate environment files");
     println!("      --version        Print version");
     println!("  -h, --help           Print help");
@@ -210,10 +216,7 @@ fn print_environments(environments: &[Environment]) {
 }
 
 fn list_environments(command: &str, args: &[String]) -> Result<()> {
-    let manager = EnvironmentManager::new().map_err(|e| {
-        eprintln!("Error: {}", e);
-        e
-    })?;
+    let manager = EnvironmentManager::new()?;
 
     let environments = manager.list_environments()?;
 
@@ -251,21 +254,98 @@ fn list_environments(command: &str, args: &[String]) -> Result<()> {
 }
 
 fn run_environment(name: &str, command: &str, args: &[String]) -> Result<()> {
-    let manager = EnvironmentManager::new().map_err(|e| {
-        eprintln!("Error: {}", e);
-        e
-    })?;
-
-    let env_file = manager.get_environment_file(name).map_err(|e| {
-        eprintln!("Error getting environment file '{}': {}", name, e);
-        e
-    })?;
-
-    let exit_code =
-        CommandExecutor::execute(&env_file, command, args).map_err(|e| {
-            eprintln!("Error executing command: {}", e);
-            e
-        })?;
+    let manager = EnvironmentManager::new()?;
+    let env_file = manager.get_environment_file(name)?;
+    let exit_code = CommandExecutor::execute(&env_file, command, args)?;
 
     std::process::exit(exit_code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_parse_no_args() {
+        let cli = Cli::try_parse_from(["cce"]).unwrap();
+        assert!(!cli.help);
+        assert!(!cli.version);
+        assert!(!cli.validate);
+        assert_eq!(cli.command, "claude");
+        assert!(cli.name.is_none());
+        assert!(cli.args.is_empty());
+    }
+
+    #[test]
+    fn test_cli_parse_help() {
+        let cli = Cli::try_parse_from(["cce", "--help"]).unwrap();
+        assert!(cli.help);
+    }
+
+    #[test]
+    fn test_cli_parse_version() {
+        let cli = Cli::try_parse_from(["cce", "--version"]).unwrap();
+        assert!(cli.version);
+    }
+
+    #[test]
+    fn test_cli_parse_validate() {
+        let cli = Cli::try_parse_from(["cce", "--validate"]).unwrap();
+        assert!(cli.validate);
+        assert!(cli.name.is_none());
+    }
+
+    #[test]
+    fn test_cli_parse_validate_with_name() {
+        let cli =
+            Cli::try_parse_from(["cce", "--validate", "myenv"]).unwrap();
+        assert!(cli.validate);
+        assert_eq!(cli.name.as_deref(), Some("myenv"));
+    }
+
+    #[test]
+    fn test_cli_parse_env_name() {
+        let cli = Cli::try_parse_from(["cce", "myenv"]).unwrap();
+        assert_eq!(cli.name.as_deref(), Some("myenv"));
+        assert_eq!(cli.command, "claude");
+    }
+
+    #[test]
+    fn test_cli_parse_custom_command() {
+        let cli =
+            Cli::try_parse_from(["cce", "-c", "my-claude", "myenv"]).unwrap();
+        assert_eq!(cli.command, "my-claude");
+        assert_eq!(cli.name.as_deref(), Some("myenv"));
+    }
+
+    #[test]
+    fn test_cli_parse_trailing_args() {
+        let cli =
+            Cli::try_parse_from(["cce", "myenv", "--", "--flag", "value"])
+                .unwrap();
+        assert_eq!(cli.name.as_deref(), Some("myenv"));
+        assert_eq!(cli.args, vec!["--flag", "value"]);
+    }
+
+    #[test]
+    fn test_validate_environments_empty_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::env::set_var(
+            "XDG_CONFIG_HOME",
+            temp_dir.path().to_str().unwrap(),
+        );
+        let result = validate_environments(None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_list_environments_empty_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::env::set_var(
+            "XDG_CONFIG_HOME",
+            temp_dir.path().to_str().unwrap(),
+        );
+        let result = list_environments("claude", &[]);
+        assert!(result.is_ok());
+    }
 }

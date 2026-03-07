@@ -13,28 +13,37 @@ pub struct CommandExecutor;
 
 impl CommandExecutor {
     /// Execute command with environment variables loaded from the given .env file
-    pub fn execute(env_file: &Path, command: &str, args: &[String]) -> Result<i32> {
+    pub fn execute(
+        env_file: &Path,
+        command: &str,
+        args: &[String],
+    ) -> Result<i32> {
         // Build shell command: source the env file and exec the specified command with args
+        let quoted_command = format!("'{}'", command.replace('\'', "'\\''"));
+        let quoted_args: Vec<String> = args
+            .iter()
+            .map(|a| format!("'{}'", a.replace('\'', "'\\''")))
+            .collect();
         let shell_cmd = format!(
             ". '{}' && exec {} {}",
             env_file.to_string_lossy().replace('\'', "'\\''"),
-            command,
-            args.join(" ")
+            quoted_command,
+            quoted_args.join(" ")
         );
 
         #[cfg(unix)]
         {
             use std::process::exit;
-            
+
             let mut command = Command::new("sh");
             command.arg("-c").arg(&shell_cmd);
-            
+
             let err = command.exec();
             // exec only returns on error, so we need to handle the error and exit
             let error_code = match err.kind() {
                 std::io::ErrorKind::NotFound => {
                     eprintln!("Error: sh command not found");
-                    127  // Standard command not found exit code
+                    127 // Standard command not found exit code
                 }
                 _ => {
                     eprintln!("Error executing shell command: {}", err);
@@ -48,8 +57,12 @@ impl CommandExecutor {
         #[cfg(not(unix))]
         {
             // Read and parse the env file
-            let content = std::fs::read_to_string(env_file)
-                .map_err(|e| CceError::ExecutionFailed(format!("Failed to read env file: {}", e)))?;
+            let content = std::fs::read_to_string(env_file).map_err(|e| {
+                CceError::ExecutionFailed(format!(
+                    "Failed to read env file: {}",
+                    e
+                ))
+            })?;
 
             let env_vars = parse_env_file(&content);
 
@@ -92,7 +105,11 @@ fn parse_env_file(content: &str) -> Vec<(String, String)> {
             let value = value
                 .strip_prefix('"')
                 .and_then(|v| v.strip_suffix('"'))
-                .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+                .or_else(|| {
+                    value
+                        .strip_prefix('\'')
+                        .and_then(|v| v.strip_suffix('\''))
+                })
                 .unwrap_or(value);
             vars.push((key.to_string(), value.to_string()));
         }
@@ -148,8 +165,12 @@ KEY3=unquoted
 "#;
             let vars = parse_env_file(content);
             assert_eq!(vars.len(), 3);
-            assert!(vars.iter().any(|(k, v)| k == "KEY1" && v == "double quoted"));
-            assert!(vars.iter().any(|(k, v)| k == "KEY2" && v == "single quoted"));
+            assert!(vars
+                .iter()
+                .any(|(k, v)| k == "KEY1" && v == "double quoted"));
+            assert!(vars
+                .iter()
+                .any(|(k, v)| k == "KEY2" && v == "single quoted"));
             assert!(vars.iter().any(|(k, v)| k == "KEY3" && v == "unquoted"));
         }
 

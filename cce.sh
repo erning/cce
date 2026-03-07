@@ -74,7 +74,12 @@
 
 set -e
 
-VERSION="2.0.8"
+# Read version from Cargo.toml if available, otherwise fallback
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/Cargo.toml" ]]; then
+  VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$SCRIPT_DIR/Cargo.toml" | head -1)
+fi
+VERSION="${VERSION:-2.0.8}"
 
 # Parse arguments
 COMMAND="claude"
@@ -87,6 +92,10 @@ ARGS=()
 while [[ $# -gt 0 ]]; do
   case $1 in
     -c|--command)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --command requires an argument" >&2
+        exit 1
+      fi
       COMMAND="$2"
       shift 2
       ;;
@@ -153,41 +162,52 @@ if [[ "$SHOW_HELP" == true ]]; then
   exit 0
 fi
 
+# Collect sorted environment names into an array
+# Usage: get_env_names result_array
+get_env_names() {
+  local -n _result=$1
+  _result=()
+  if [[ -d "$ENV_DIR" ]]; then
+    local files=()
+    for f in "$ENV_DIR"/*.env; do
+      if [[ -f "$f" ]]; then
+        files+=("$(basename "$f" .env)")
+      fi
+    done
+    if [[ ${#files[@]} -gt 0 ]]; then
+      while IFS= read -r name; do
+        _result+=("$name")
+      done < <(printf '%s\n' "${files[@]}" | sort)
+    fi
+  fi
+}
+
+# Validate environment name (reject path traversal)
+validate_env_name() {
+  local name="$1"
+  if [[ -z "$name" ]] || [[ "$name" == */* ]] || [[ "$name" == *\\* ]] || [[ "$name" == *..* ]]; then
+    echo "Error: Invalid environment name '$name'" >&2
+    exit 1
+  fi
+}
+
 # List available environments
 list_environments() {
   echo "Usage: cce [OPTIONS] [NAME] [-- ARGS...]"
-  echo ""
-  echo "Available environments:"
 
-  if [[ -d "$ENV_DIR" ]]; then
-    local env_files=()
-    for env_file in "$ENV_DIR"/*.env; do
-      if [[ -f "$env_file" ]]; then
-        env_files+=("$(basename "$env_file" .env)")
-      fi
-    done
+  local env_names=()
+  get_env_names env_names
 
-    # Sort environments alphabetically
-    IFS=$'\n' env_files=($(sort <<<"${env_files[*]}"))
-    unset IFS
-
-    if [[ ${#env_files[@]} -eq 0 ]]; then
-      echo "  No environments found."
-      echo ""
-      echo "Create environment files in: $ENV_DIR"
-      if [[ ! -d "$ENV_DIR" ]]; then
-        echo "Directory does not exist yet."
-      fi
-    else
-      for env_name in "${env_files[@]}"; do
-        echo "  $env_name"
-      done
+  if [[ ${#env_names[@]} -eq 0 ]]; then
+    echo "No environments found."
+    echo "Create environment files in: $ENV_DIR"
+    if [[ ! -d "$ENV_DIR" ]]; then
+      echo "Directory does not exist yet."
     fi
   else
-    echo "  No environments found."
-    echo ""
-    echo "Create environment files in: $ENV_DIR"
-    echo "Directory does not exist yet."
+    for name in "${env_names[@]}"; do
+      echo "  $name"
+    done
   fi
 }
 
@@ -235,29 +255,18 @@ validate_environment() {
 if [[ "$VALIDATE" == true ]]; then
   all_valid=true
   if [[ -n "$ENV_NAME" ]]; then
+    validate_env_name "$ENV_NAME"
     validate_environment "$ENV_NAME" || all_valid=false
   else
-    validated=false
-    if [[ -d "$ENV_DIR" ]]; then
-      # Sort environment files
-      env_files=()
-      for env_file in "$ENV_DIR"/*.env; do
-        if [[ -f "$env_file" ]]; then
-          env_files+=("$(basename "$env_file" .env)")
-        fi
-      done
-      IFS=$'\n' env_files=($(sort <<<"${env_files[*]}"))
-      unset IFS
+    local_env_names=()
+    get_env_names local_env_names
 
-      for env_name in "${env_files[@]}"; do
-        validated=true
-        validate_environment "$env_name" || all_valid=false
-      done
-    fi
-
-    if [[ "$validated" == false ]]; then
+    if [[ ${#local_env_names[@]} -eq 0 ]]; then
       echo "No environments found to validate."
     else
+      for env_name in "${local_env_names[@]}"; do
+        validate_environment "$env_name" || all_valid=false
+      done
       echo ""
       if [[ "$all_valid" == true ]]; then
         echo "All environments are valid."
@@ -280,22 +289,12 @@ fi
 
 # No environment name provided
 if [[ -z "$ENV_NAME" ]]; then
-  env_files=()
-  if [[ -d "$ENV_DIR" ]]; then
-    for env_file in "$ENV_DIR"/*.env; do
-      if [[ -f "$env_file" ]]; then
-        env_files+=("$(basename "$env_file" .env)")
-      fi
-    done
-  fi
-
-  # Sort environments alphabetically
-  IFS=$'\n' env_files=($(sort <<<"${env_files[*]}"))
-  unset IFS
+  env_names=()
+  get_env_names env_names
 
   # Try interactive fzf selection if available
-  if [[ ${#env_files[@]} -gt 0 ]] && command -v fzf &> /dev/null; then
-    selected=$(printf "%s\n" "${env_files[@]}" | fzf) || {
+  if [[ ${#env_names[@]} -gt 0 ]] && command -v fzf &> /dev/null; then
+    selected=$(printf "%s\n" "${env_names[@]}" | fzf) || {
       # User cancelled (ESC/q), show list
       list_environments
       exit 0
@@ -313,11 +312,14 @@ if [[ -z "$ENV_NAME" ]]; then
   fi
 fi
 
+# Validate environment name
+validate_env_name "$ENV_NAME"
+
 # Run environment
 ENV_FILE="$ENV_DIR/${ENV_NAME}.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Error: File $ENV_FILE not found"
+  echo "Error: Environment file not found: $ENV_FILE" >&2
   exit 1
 fi
 

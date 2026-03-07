@@ -92,6 +92,16 @@ impl EnvironmentManager {
 
     /// Get the environment file path for a specific environment name
     pub fn get_environment_file(&self, name: &str) -> Result<PathBuf> {
+        if name.is_empty()
+            || name.contains('/')
+            || name.contains('\\')
+            || name.contains("..")
+        {
+            return Err(CceError::InvalidFormat(
+                self.config_dir.join(format!("{}.env", name)),
+            ));
+        }
+
         let env_file = self.config_dir.join(format!("{}.env", name));
 
         if !env_file.exists() {
@@ -105,12 +115,6 @@ impl EnvironmentManager {
     pub fn load_environment(&self, name: &str) -> Result<Environment> {
         let env_file = self.get_environment_file(name)?;
         Environment::from_file(env_file, name.to_string())
-    }
-}
-
-impl Default for EnvironmentManager {
-    fn default() -> Self {
-        Self::new().expect("Failed to create environment manager")
     }
 }
 
@@ -241,5 +245,32 @@ mod tests {
         let envs = manager.list_environments().unwrap();
         assert_eq!(envs.len(), 1);
         assert_eq!(envs[0].name, "valid");
+    }
+
+    #[test]
+    fn test_rejects_path_traversal() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = EnvironmentManager {
+            config_dir: temp_dir.path().to_path_buf(),
+        };
+        assert!(manager.get_environment_file("../../etc/passwd").is_err());
+        assert!(manager.get_environment_file("foo/bar").is_err());
+        assert!(manager.get_environment_file("a\\b").is_err());
+        assert!(manager.get_environment_file("").is_err());
+        assert!(manager.get_environment_file("a..b").is_err());
+    }
+
+    #[test]
+    fn test_accepts_valid_names() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let env_path = temp_dir.path().join("my-env.env");
+        let mut file = fs::File::create(&env_path).unwrap();
+        writeln!(file, "export ANTHROPIC_AUTH_TOKEN=token").unwrap();
+
+        let manager = EnvironmentManager {
+            config_dir: temp_dir.path().to_path_buf(),
+        };
+        assert!(manager.get_environment_file("my-env").is_ok());
     }
 }

@@ -37,7 +37,8 @@ impl Environment {
 
     /// Validate the environment file contains required variables
     pub fn validate(&self) -> Result<ValidationResult> {
-        let content = fs::read_to_string(&self.file_path).map_err(CceError::Io)?;
+        let content =
+            fs::read_to_string(&self.file_path).map_err(CceError::Io)?;
         Ok(validate_env_content(&content))
     }
 }
@@ -122,7 +123,9 @@ export ANTHROPIC_BASE_URL="https://api.example.com"
 "#;
         let result = validate_env_content(content);
         assert!(!result.is_valid);
-        assert!(result.missing_required.contains(&"ANTHROPIC_AUTH_TOKEN".to_string()));
+        assert!(result
+            .missing_required
+            .contains(&"ANTHROPIC_AUTH_TOKEN".to_string()));
     }
 
     #[test]
@@ -132,6 +135,8 @@ export ANTHROPIC_AUTH_TOKEN="test_token"
 "#;
         let result = validate_env_content(content);
         assert!(result.is_valid);
-        assert!(result.missing_optional.contains(&"ANTHROPIC_BASE_URL".to_string()));
+        assert!(result
+            .missing_optional
+            .contains(&"ANTHROPIC_BASE_URL".to_string()));
     }
 }

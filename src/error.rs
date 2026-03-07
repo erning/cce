@@ -12,17 +12,13 @@ pub enum CceError {
     #[error("Invalid environment file format: {0}")]
     InvalidFormat(PathBuf),
 
-    #[error("Validation failed: {0}")]
-    ValidationFailed(String),
-
-    #[error("Command '{0}' not found. Please ensure it is installed and in PATH.")]
+    #[error(
+        "Command '{0}' not found. Please ensure it is installed and in PATH."
+    )]
     CommandNotFound(String),
 
     #[error("Failed to execute command: {0}")]
     ExecutionFailed(String),
-
-    #[error("Shell command failed: {0}")]
-    ShellCommandFailed(String),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
