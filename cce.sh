@@ -79,7 +79,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/Cargo.toml" ]]; then
   VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$SCRIPT_DIR/Cargo.toml" | head -1)
 fi
-VERSION="${VERSION:-2.0.8}"
+VERSION="${VERSION:-2.0.9}"
 
 # Parse arguments
 COMMAND="claude"
