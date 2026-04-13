@@ -72,10 +72,25 @@ as stale and remove it.
 ./cce.sh <name> [args...]
 ```
 
-### Lint baseline
+### Lint + smoke baseline
 
-Three checks, all expected to be clean before any commit that touches
-`cce.sh`:
+Run before any commit that touches `cce.sh`:
+
+```bash
+scripts/smoke.sh
+```
+
+The smoke runner is self-contained (builds its own temp config dir,
+does not touch `~/.config/cce`, does not require `claude` to be
+installed) and covers ~58 end-to-end behaviors: argument parsing,
+NAME-then-flag passthrough, XDG/HOME resolution, the env name
+whitelist, discovery filter + dedup, source error paths (parse error
+*and* runtime failure), `command -v` post-source check, permission
+warning, empty-ARGS exec, and the three lint tools. It exits 0 if
+everything passes, 1 otherwise, and prints the failing test names at
+the end.
+
+The lint baseline run by the smoke script:
 
 ```bash
 bash -n cce.sh                  # syntax check on macOS-stock /bin/bash
@@ -83,18 +98,8 @@ shellcheck -s bash cce.sh       # static analysis (bash dialect)
 shfmt -d -i 2 -ci cce.sh        # formatting: 2-space indent, indented case
 ```
 
-`shfmt -w -i 2 -ci cce.sh` rewrites the file in place if formatting drifts.
-There is no CI that runs these — they are a manual baseline.
-
-### Manual verification
-
-There is no automated test suite. Verify changes by running the affected
-mode against a real `~/.config/cce/` directory — at minimum: `--help`,
-`--version`, the list/picker path, an unknown-flag rejection, and one
-`cce <name>` invocation that hits `exec`. For source/exec changes, also
-test with an env file that contains a deliberately-failing command and
-one with a deliberate parse error to confirm both error paths print a
-clear `cce` context line.
+`shfmt -w -i 2 -ci cce.sh` rewrites the file in place if formatting
+drifts. There is no CI — the smoke script is a manual baseline.
 
 ## Commit style
 
