@@ -32,7 +32,7 @@ ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    -c|--command)
+    -c | --command)
       if [[ $# -lt 2 ]]; then
         echo "Error: --command requires an argument" >&2
         exit 1
@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
       COMMAND="$2"
       shift 2
       ;;
-    -h|--help)
+    -h | --help)
       SHOW_HELP=true
       shift
       ;;
@@ -216,7 +216,7 @@ if [[ -z "$ENV_NAME" ]]; then
       0)
         ENV_NAME="$selected"
         ;;
-      1|130)
+      1 | 130)
         # 1 = no match selected; 130 = SIGINT (Ctrl-C / Esc).
         list_environments ${env_names[@]+"${env_names[@]}"}
         exit 0
@@ -264,7 +264,7 @@ get_file_mode() {
 }
 
 file_mode=$(get_file_mode "$ENV_FILE")
-if [[ -n "$file_mode" ]] && (( 8#$file_mode & 0022 )); then
+if [[ -n "$file_mode" ]] && ((8#$file_mode & 0022)); then
   echo "Warning: $ENV_FILE is writable by group or other (mode $file_mode)" >&2
   echo "Consider: chmod 600 $ENV_FILE" >&2
 fi

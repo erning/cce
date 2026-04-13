@@ -70,10 +70,23 @@ as stale and remove it.
 # Run locally without installing
 ./cce.sh --help
 ./cce.sh <name> [args...]
-
-# Lint
-shellcheck cce.sh
 ```
+
+### Lint baseline
+
+Three checks, all expected to be clean before any commit that touches
+`cce.sh`:
+
+```bash
+bash -n cce.sh                  # syntax check on macOS-stock /bin/bash
+shellcheck -s bash cce.sh       # static analysis (bash dialect)
+shfmt -d -i 2 -ci cce.sh        # formatting: 2-space indent, indented case
+```
+
+`shfmt -w -i 2 -ci cce.sh` rewrites the file in place if formatting drifts.
+There is no CI that runs these — they are a manual baseline.
+
+### Manual verification
 
 There is no automated test suite. Verify changes by running the affected
 mode against a real `~/.config/cce/` directory — at minimum: `--help`,
