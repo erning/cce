@@ -1,184 +1,212 @@
-# CCE (Claude Code Environment) Manager
+# CCE — Claude Code Environment Manager
 
-CCE is a shell script that allows you to manage multiple Claude Code environments with different API configurations. It enables easy switching between different API providers and authentication tokens without having to manually set environment variables each time.
+A small Bash script that runs `claude` — or any other command — with
+environment variables loaded from a named `.env` file under
+`~/.config/cce/`. Use it to keep multiple Claude API providers and
+accounts side-by-side and switch between them without touching your shell
+profile.
 
-## Features
-
-- **Multi-Provider Support**: Switch between different Claude API providers (e.g., GLM, Kimi, Minimax)
-- **Environment Management**: Manage multiple API keys for different accounts or projects
-- **Quick Configuration**: Quickly change API endpoints for testing different services
-- **Environment Separation**: Maintain separate configurations for development and production
-
-## Installation
-
-1. Download the `cce.sh` script to your preferred location (e.g., `/usr/local/bin/` or `~/bin/`):
-
-   ```bash
-   curl -o cce https://raw.githubusercontent.com/erning/cce/refs/heads/master/cce.sh
-   chmod +x cce
-   ```
-
-2. Ensure the script is in your PATH or reference it with the full path.
-
-## Setup
-
-Environment configuration files are stored using the **XDG Base Directory specification**:
-
-- **Default location**: `~/.config/cce/`
-- **Custom location**: Set `XDG_CONFIG_HOME` environment variable to use a custom path (e.g., `XDG_CONFIG_HOME=/custom/path` will use `/custom/path/cce/`)
-
-Each environment file should be named `<name>.env` and contain the following exports:
-
-### Example Environment File (`~/.config/cce/glm.env`)
+## Install
 
 ```bash
-export ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic"
-export ANTHROPIC_AUTH_TOKEN="your_token_here"
-```
-
-### Configuration Parameters
-
-- **ANTHROPIC_BASE_URL**: The API endpoint URL
-- **ANTHROPIC_AUTH_TOKEN**: Your authentication token/key
-
-### Migration from Old Location (macOS users)
-
-If you previously used the macOS Application Support directory (`~/Library/Application Support/cce/`), you'll need to migrate your configuration files:
-
-```bash
-# Create the new config directory
-mkdir -p ~/.config/cce
-
-# Copy existing environment files
-cp ~/Library/Application\ Support/cce/*.env ~/.config/cce/
-
-# Verify the files were copied
-ls -la ~/.config/cce/
-```
-
-## Usage
-
-### List Available Environments
-
-```bash
-./cce
-```
-
-This will display all available environment configurations in `~/.config/cce/`.
-
-### Use a Specific Environment
-
-```bash
-./cce <environment_name> [claude-code arguments...]
-```
-
-### Examples
-
-```bash
-# List all available environments
-./cce
-
-# Use GLM environment with --help
-./cce glm -- --help
-
-# Use Kimi environment with a prompt
-./cce kimi-k2 -- "Write a Python script"
-
-# Use Minimax environment with --version
-./cce minimax-m2 -- --version
+curl -o cce https://raw.githubusercontent.com/erning/cce/refs/heads/master/cce.sh
+chmod +x cce
+mv cce ~/.local/bin/   # or anywhere on $PATH
 ```
 
 ## Requirements
 
-- **Claude Code CLI tool** must be installed and accessible as `claude`
-- **Environment directory**: `~/.config/cce/`
-- **Valid environment files** with proper permissions
+- Bash 3.2+ (works on stock macOS `/bin/bash`).
+- A Unix-like OS. The script ends with `source` + `exec` and is not
+  intended for Windows.
+- The target command (default `claude`) on `PATH`.
+- Optional: [`fzf`](https://github.com/junegunn/fzf) for interactive
+  environment selection when `cce` is invoked with no name.
 
-## How It Works
+## Quick start
 
-1. CCE looks for environment files in `~/.config/cce/`
-2. When you specify an environment name, it sources the corresponding `.env` file
-3. It then passes all remaining arguments to the `claude` command
-4. The Claude Code CLI uses the environment variables from the sourced file
+```bash
+# 1. Create the config directory
+mkdir -p ~/.config/cce
 
-## Directory Structure
+# 2. Write an environment file (chmod recommended — it contains a token)
+cat > ~/.config/cce/glm.env <<'EOF'
+export ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic"
+export ANTHROPIC_AUTH_TOKEN="your_token_here"
+EOF
+chmod 600 ~/.config/cce/glm.env
+
+# 3. Use it
+cce              # interactive picker (fzf) or list
+cce glm          # run claude with the glm environment
+cce glm -- --help                      # pass flags through to claude
+cce -c claude-code glm -- "hello"      # use a different executable
+```
+
+## Usage
+
+```
+Usage: cce [OPTIONS] [NAME] [-- ARGS...]
+```
+
+### Arguments
+
+| Argument  | Description                                                      |
+|-----------|------------------------------------------------------------------|
+| `NAME`    | Environment name. Resolves to `<config-dir>/<NAME>.env`.         |
+| `ARGS...` | Arguments forwarded to the target command (after `--`).          |
+
+`NAME` is the first non-option positional argument. Anything after a
+literal `--` is collected verbatim and passed to the command. Tokens that
+appear after `NAME` *without* a preceding `--` are also collected as
+`ARGS`, but use `--` whenever an arg starts with `-` so it is not mistaken
+for a `cce` flag.
+
+If `NAME` itself starts with `-` it is not treated as an environment name —
+`cce` falls back to listing / interactive selection. Always put flags
+*before* the environment name.
+
+### Options
+
+| Flag                    | Description                                          |
+|-------------------------|------------------------------------------------------|
+| `-c`, `--command <CMD>` | Executable to run. Default: `claude`.                |
+| `--version`             | Print the script version and exit.                   |
+| `-h`, `--help`          | Print help and exit.                                 |
+
+### Modes of operation
+
+`cce` has three mutually exclusive modes, selected from the parsed
+arguments:
+
+1. **Help / version** — `--help` or `--version`. Prints and exits 0.
+2. **Run a named environment** — `NAME` was provided and does not start
+   with `-`. Sources the environment file and `exec`s the command.
+3. **List or pick** — no `NAME` was provided (or it started with `-`). If
+   `fzf` is available *and* at least one environment exists, an
+   interactive picker is shown; otherwise the available environments are
+   listed.
+
+### Examples
+
+```bash
+# Interactive picker (or list if fzf is not installed)
+cce
+
+# Run the default `claude` command with the glm environment
+cce glm
+
+# Pass arguments through to claude — note the `--` separator
+cce glm -- --model claude-3-opus "explain this codebase"
+
+# Use a custom executable (claude-code) with the kimi-k2 environment
+cce --command claude-code kimi-k2 -- --version
+
+# Same, using the short flag
+cce -c claude-code kimi-k2
+```
+
+### Exit codes
+
+| Code  | Meaning                                                            |
+|-------|--------------------------------------------------------------------|
+| `0`   | Success: command ran (and the command itself exited 0), or help/version was printed. |
+| `1`   | An error originating from `cce` itself: invalid name, missing file, bad arguments. |
+| other | Forwarded from the target command after `exec`.                    |
+
+## Configuration
+
+`cce` reads environment configurations from per-environment files in a
+single directory. The directory location follows the
+[XDG Base Directory specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html).
+
+### Config directory
+
+The directory is resolved at startup as follows:
+
+1. If `XDG_CONFIG_HOME` is set **and** non-empty (after stripping spaces),
+   use `$XDG_CONFIG_HOME/cce/`.
+2. Otherwise use `$HOME/.config/cce/`.
+
+`cce` does not create the directory for you. If it does not exist, listing
+reports it as empty rather than failing.
+
+### File layout
+
+Each environment is a single file inside the config directory:
 
 ```
 ~/.config/cce/
-├── glm.env       # GLM provider configuration
-├── kimi-k2.env   # Kimi K2 configuration
-└── minimax-m2.env # Minimax M2 configuration
+├── glm.env
+├── kimi-k2.env
+└── minimax-m2.env
 ```
 
-## Use Cases
+Rules:
 
-- **Switch API Providers**: Easily switch between different Claude API providers without modifying system-wide environment variables
-- **Multiple Accounts**: Manage API keys for different accounts or projects
-- **Testing & Development**: Quickly change API endpoints for testing different services
-- **Environment Isolation**: Maintain separate configurations for development and production environments
+- The file extension **must** be `.env`. Files with any other extension
+  are ignored by discovery.
+- The environment name is the filename with the `.env` suffix stripped,
+  so `kimi-k2.env` is the environment `kimi-k2`.
+- Discovery is non-recursive — only the top level of the config directory
+  is scanned.
+- Listing is sorted alphabetically by name.
 
-## Error Handling
+### File format
 
-- If no environment name is provided, CCE lists available environments
-- If the specified environment file doesn't exist, an error message is displayed
-- Exits with appropriate error codes for debugging
+Environment files are sourced by Bash at runtime, so they may use the
+full Bash syntax:
 
-## Troubleshooting
-
-### "Directory ~/.config/cce does not exist"
-
-Create the directory:
 ```bash
-mkdir -p ~/.config/cce
+# ~/.config/cce/glm.env
+export ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic"
+export ANTHROPIC_AUTH_TOKEN="your_token_here"
 ```
 
-### "Environment file not found"
+Use `export KEY=VALUE` for anything you want the target command to see —
+plain `KEY=VALUE` assignments are visible inside the script while it is
+sourcing the file, but are not inherited by the `exec`'d child process.
 
-Ensure that:
-1. The environment file exists in `~/.config/cce/`
-2. The file has a `.env` extension
-3. The file contains valid `export` statements for the required variables
+You can use anything Bash accepts: variable expansion, command
+substitution, conditionals, etc. For example, reading a token from a
+file:
 
-### "claude: command not found"
-
-Ensure that the Claude Code CLI tool is installed and accessible in your PATH as `claude`.
-
-## Development
-
-### OpenSpec Workflow
-
-This project uses OpenSpec for managing changes and specifications. The OpenSpec workflow provides a structured approach to planning, implementing, and tracking changes.
-
-#### Key OpenSpec Commands
-
-- **`openspec list`** - List all active changes and their status
-- **`openspec show <id>`** - Display detailed information about a specific change
-- **`openspec proposal`** - Create a new change proposal with proper scaffolding
-- **`openspec apply <id>`** - Implement an approved change following the specification
-- **`openspec archive <id>`** - Archive a completed change and update specifications
-- **`openspec validate`** - Validate all specifications and changes for consistency
-
-#### Change Management Process
-
-1. **Planning**: Use `openspec proposal` to create a new change with proper documentation
-2. **Review**: Changes include `proposal.md`, `tasks.md`, and optionally `design.md`
-3. **Implementation**: Follow the structured tasks in `tasks.md` for systematic development
-4. **Validation**: Run `openspec validate --strict` to ensure specifications are correct
-5. **Completion**: Archive completed changes to maintain project history
-
-#### Project Structure
-
-```
-openspec/
-├── changes/          # Active and archived changes
-│   ├── <change-id>/  # Individual change directories
-│   └── archive/      # Completed changes
-├── specs/           # Project specifications
-└── AGENTS.md        # OpenSpec conventions and guidelines
+```bash
+export ANTHROPIC_BASE_URL="https://api.example.com"
+export ANTHROPIC_AUTH_TOKEN="$(cat ~/.secrets/anthropic-token)"
 ```
 
-For detailed OpenSpec conventions and agent guidelines, refer to `openspec/AGENTS.md`.
+Comments start with `#` and are ignored by Bash.
+
+### Variables consumed by Claude
+
+| Variable               | Required | Purpose                                  |
+|------------------------|----------|------------------------------------------|
+| `ANTHROPIC_AUTH_TOKEN` | Yes      | Authentication token for the API.        |
+| `ANTHROPIC_BASE_URL`   | No       | API endpoint URL. Provider-default if absent. |
+
+`cce` itself does not interpret these variables — it just sources the
+file and `exec`s the target command. The target command (usually
+`claude`) is what actually reads them. You are free to export anything
+else the command understands.
+
+### Security notes
+
+- Environment files contain API tokens. Restrict their permissions
+  (`chmod 600`) and keep the directory out of any backups or sync targets
+  that you do not control.
+- `cce` never logs the contents of environment files; only their paths
+  appear in error messages.
+- Environment **names** passed on the command line are validated to
+  prevent path traversal (rejected if they contain `/`, `\`, `..`, or are
+  empty). Implementation details in [DESIGN.md](DESIGN.md#environment-name-validation).
+
+## How it works
+
+See [DESIGN.md](DESIGN.md) for the execution pipeline, the `source` +
+`exec` model, fzf integration, and the rationale for keeping the
+implementation as a single Bash script.
 
 ## License
 
-The MIT License
+MIT.

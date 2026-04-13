@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # ==============================================================================
 # CCE (Claude Code Environment) Manager
@@ -43,10 +43,7 @@
 #    ./cce -c claude-code <environment_name>
 #    ./cce --command echo <environment_name>
 #
-# 4. Validate environments:
-#    ./cce --validate [environment_name]
-#
-# 5. Examples:
+# 4. Examples:
 #    ./cce glm -- --help
 #    ./cce kimi-k2 -- "Write a Python script"
 #    ./cce minimax-m2 -- --version
@@ -54,7 +51,6 @@
 # OPTIONS:
 # -------
 #   -c, --command <CMD>  Command executable to run [default: claude]
-#       --validate       Validate environment files
 #       --version        Print version
 #   -h, --help           Print help
 #
@@ -74,17 +70,11 @@
 
 set -e
 
-# Read version from Cargo.toml if available, otherwise fallback
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$SCRIPT_DIR/Cargo.toml" ]]; then
-  VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$SCRIPT_DIR/Cargo.toml" | head -1)
-fi
-VERSION="${VERSION:-2.0.9}"
+VERSION="2.1.0"
 
 # Parse arguments
 COMMAND="claude"
 ENV_NAME=""
-VALIDATE=false
 SHOW_HELP=false
 SHOW_VERSION=false
 ARGS=()
@@ -98,10 +88,6 @@ while [[ $# -gt 0 ]]; do
       fi
       COMMAND="$2"
       shift 2
-      ;;
-    --validate)
-      VALIDATE=true
-      shift
       ;;
     -h|--help)
       SHOW_HELP=true
@@ -152,7 +138,6 @@ print_help() {
   echo ""
   echo "Options:"
   echo "  -c, --command <CMD>  Command executable to run [default: claude]"
-  echo "      --validate       Validate environment files"
   echo "      --version        Print version"
   echo "  -h, --help           Print help"
 }
@@ -162,22 +147,18 @@ if [[ "$SHOW_HELP" == true ]]; then
   exit 0
 fi
 
-# Collect sorted environment names into an array
-# Usage: get_env_names result_array
+# Print sorted environment names to stdout, one per line.
+# Avoids Bash 4+ namerefs so the script runs on stock macOS /bin/bash 3.2.
 get_env_names() {
-  local -n _result=$1
-  _result=()
   if [[ -d "$ENV_DIR" ]]; then
-    local files=()
+    local f names=()
     for f in "$ENV_DIR"/*.env; do
       if [[ -f "$f" ]]; then
-        files+=("$(basename "$f" .env)")
+        names+=("$(basename "$f" .env)")
       fi
     done
-    if [[ ${#files[@]} -gt 0 ]]; then
-      while IFS= read -r name; do
-        _result+=("$name")
-      done < <(printf '%s\n' "${files[@]}" | sort)
+    if [[ ${#names[@]} -gt 0 ]]; then
+      printf '%s\n' "${names[@]}" | sort
     fi
   fi
 }
@@ -196,7 +177,10 @@ list_environments() {
   echo "Usage: cce [OPTIONS] [NAME] [-- ARGS...]"
 
   local env_names=()
-  get_env_names env_names
+  local name
+  while IFS= read -r name; do
+    env_names+=("$name")
+  done < <(get_env_names)
 
   if [[ ${#env_names[@]} -eq 0 ]]; then
     echo "No environments found."
@@ -211,76 +195,6 @@ list_environments() {
   fi
 }
 
-# Validate environment file
-# Returns 0 if valid, 1 if invalid
-validate_environment() {
-  local env_name="$1"
-  local env_file="$ENV_DIR/${env_name}.env"
-
-  if [[ ! -f "$env_file" ]]; then
-    echo "Validating $env_name... ERROR: File not found"
-    return 1
-  fi
-
-  printf "Validating %s... " "$env_name"
-
-  # Check for required variables
-  local missing_required=()
-  local missing_optional=()
-
-  if ! grep -q "^export ANTHROPIC_AUTH_TOKEN=" "$env_file" && \
-     ! grep -q "^ANTHROPIC_AUTH_TOKEN=" "$env_file"; then
-    missing_required+=("ANTHROPIC_AUTH_TOKEN")
-  fi
-
-  if ! grep -q "^export ANTHROPIC_BASE_URL=" "$env_file" && \
-     ! grep -q "^ANTHROPIC_BASE_URL=" "$env_file"; then
-    missing_optional+=("ANTHROPIC_BASE_URL")
-  fi
-
-  if [[ ${#missing_required[@]} -eq 0 ]]; then
-    echo "✓ OK"
-    if [[ ${#missing_optional[@]} -gt 0 ]]; then
-      echo "  Note: Missing optional vars: ${missing_optional[*]}"
-    fi
-    return 0
-  else
-    echo "✗ INVALID"
-    echo "  Missing required: ${missing_required[*]}"
-    return 1
-  fi
-}
-
-# Run validate mode
-if [[ "$VALIDATE" == true ]]; then
-  all_valid=true
-  if [[ -n "$ENV_NAME" ]]; then
-    validate_env_name "$ENV_NAME"
-    validate_environment "$ENV_NAME" || all_valid=false
-  else
-    local_env_names=()
-    get_env_names local_env_names
-
-    if [[ ${#local_env_names[@]} -eq 0 ]]; then
-      echo "No environments found to validate."
-    else
-      for env_name in "${local_env_names[@]}"; do
-        validate_environment "$env_name" || all_valid=false
-      done
-      echo ""
-      if [[ "$all_valid" == true ]]; then
-        echo "All environments are valid."
-      else
-        echo "Some environments have issues."
-      fi
-    fi
-  fi
-  if [[ "$all_valid" == false ]]; then
-    exit 1
-  fi
-  exit 0
-fi
-
 # Check if first arg starts with '-', treat as showing list
 if [[ "$ENV_NAME" == -* ]]; then
   list_environments
@@ -290,7 +204,9 @@ fi
 # No environment name provided
 if [[ -z "$ENV_NAME" ]]; then
   env_names=()
-  get_env_names env_names
+  while IFS= read -r name; do
+    env_names+=("$name")
+  done < <(get_env_names)
 
   # Try interactive fzf selection if available
   if [[ ${#env_names[@]} -gt 0 ]] && command -v fzf &> /dev/null; then

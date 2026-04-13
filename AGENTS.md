@@ -1,157 +1,71 @@
-<!-- OPENSPEC:START -->
-# OpenSpec Instructions
+# Agent Guide — CCE
 
-These instructions are for AI assistants working in this project.
+CCE is a single Bash script (`cce.sh`) that runs `claude` — or any other
+command — with environment variables loaded from a named `.env` file under
+`~/.config/cce/`. There is no compiled component, no build step, no
+package manager. Edit the script in place.
 
-Always open `@/openspec/AGENTS.md` when the request:
-- Mentions planning or proposals (words like proposal, spec, change, plan)
-- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
-- Sounds ambiguous and you need the authoritative spec before coding
+## Source of truth
 
-Use `@/openspec/AGENTS.md` to learn:
-- How to create and apply change proposals
-- Spec format and conventions
-- Project structure and guidelines
+- `cce.sh` — the entire implementation. If behavior and docs disagree,
+  the script wins; update the docs.
+- `README.md` — user-facing reference: install, CLI, configuration,
+  examples. Update it in the same change as any script edit that changes
+  observable behavior.
+- `DESIGN.md` — internals: execution pipeline, name validation,
+  discovery, fzf flow, source+exec model. Read it before changing how the
+  script runs commands or handles environment files.
 
-Keep this managed block so 'openspec update' can refresh the instructions.
+## What was removed
 
-<!-- OPENSPEC:END -->
+This project previously had a Rust reimplementation under `src/`, an
+OpenSpec workflow under `openspec/`, and a multi-file `docs/` tree. All
+three are gone. Do not propose reintroducing them, do not write Rust, do
+not create OpenSpec proposals or specs, and do not recreate `docs/` —
+user-facing content lives in `README.md`, internals live in `DESIGN.md`.
+If you find a stray reference to `cargo`, `Cargo.toml`, `src/*.rs`,
+`openspec/`, `docs/`, or a spec-id like `CLI-001` / `CONF-002`, treat it
+as stale and remove it.
 
-# Agent Guidelines for CCE Project
+## Conventions
 
-## Build/Lint/Test Commands
+- **Language**: Bash 3.2+. The script must run on stock macOS `/bin/bash`
+  (3.2.57). That rules out `local -n` namerefs (Bash 4.3+),
+  `mapfile`/`readarray` (Bash 4+), associative arrays, and `${var,,}`
+  case conversion. Process substitution `< <(...)` and arrays are fine.
+- **Strict mode**: `set -e` is on. New code must keep working under it —
+  guard expected failures with `|| true` or explicit `if` blocks.
+- **No external deps** beyond the coreutils already assumed (`grep`,
+  `sort`, `printf`, `sed`, `basename`, `command`). `fzf` is optional and
+  detected at runtime.
+- **Unix only**. The script ends with `source` + `exec`; do not add
+  Windows fallbacks.
+- **Security**: environment names are validated against `/`, `\`, `..`,
+  and empty before any filesystem lookup. Keep that check in front of
+  every new code path that uses a user-supplied name. Never log the
+  contents of an env file — only its path.
+- **Version**: hard-coded as `VERSION` near the top of `cce.sh`. Bump it
+  in the same commit as any user-visible change.
 
-**Core Commands:**
-- `cargo build` - Build debug version
-- `cargo build --release` - Build optimized release version
-- `cargo test` - Run all tests
-- `cargo test <test_name>` - Run specific test by name
-- `cargo clippy` - Run linting checks
-- `cargo fmt` - Format code
-- `cargo fmt --check` - Check formatting without modifying
+## Working on the script
 
-**Development:**
-- `cargo run -- <args>` - Run with arguments (e.g., `cargo run -- glm --help`)
-- `cargo run -- --validate` - Validate all environments
-- `cargo run -- --help` - Show help
+```bash
+# Run locally without installing
+./cce.sh --help
+./cce.sh <name> -- <args...>
 
-**Release:**
-- `cargo build --release` - Optimized build with LTO
-- Binary output: `target/release/cce`
-
-## Project Structure
-
-```
-src/
-├── main.rs       # CLI entry point, argument parsing with clap
-├── lib.rs        # Library exports (config, error, executor, manager)
-├── config.rs     # Environment struct, validation logic
-├── manager.rs    # EnvironmentManager for file discovery and loading
-├── executor.rs   # CommandExecutor for shell-based execution
-└── error.rs      # CceError enum with thiserror derives
-```
-
-## Code Style Guidelines
-
-**Imports & Dependencies:**
-- Group imports: standard library → external crates → local modules
-- Use `use crate::` for local module imports
-- Key dependencies:
-  - `clap` (4.x) - CLI argument parsing with derive macros
-  - `thiserror` (2.x) - Error type derivation
-  - `tempfile` (dev) - File system testing
-
-**Naming Conventions:**
-- Functions/variables: `snake_case`
-- Types/Structs/Enums: `PascalCase` 
-- Constants: `SCREAMING_SNAKE_CASE`
-- Files: `snake_case.rs`
-
-**Error Handling:**
-- Use `thiserror::Error` derive for error types
-- Define custom error enum `CceError` with `#[error("message")]` attributes
-- Return `Result<T, CceError>` (aliased as `Result<T>`) from fallible functions
-- Use `?` operator for error propagation
-- Map errors with `.map_err()` when context needed
-
-**Code Organization:**
-- Keep modules small and focused (single responsibility)
-- Use `#[cfg(test)]` modules for unit tests
-- Public items need `///` doc comments
-- Follow XDG Base Directory specification for config paths
-
-**Testing:**
-- Write unit tests in `#[cfg(test)]` modules within each file
-- Use `tempfile::tempdir()` for file system testing
-- Run with `cargo test` or `cargo test <test_name>`
-- Tests for: validation, env parsing, file discovery, error handling
-
-**Platform Considerations:**
-- Unix: Use `CommandExt::exec()` for process replacement
-- Windows: Use subprocess with manual env parsing (compile-time conditional)
-- Use `#[cfg(unix)]` and `#[cfg(not(unix))]` for platform-specific code
-
-**Security:**
-- Never log or expose API tokens
-- Validate all input paths
-- Escape file paths properly for shell execution
-- Use proper error handling for file operations
-
-## CLI Structure (clap)
-
-```rust
-#[derive(Parser, Debug)]
-#[command(name = "cce")]
-#[command(about = "Claude Code Environment Manager")]
-struct Cli {
-    #[arg(long)]
-    version: bool,
-
-    #[arg(short = 'h', long)]
-    help: bool,
-
-    #[arg(short, long, default_value = "claude")]
-    command: String,
-
-    name: Option<String>,
-
-    #[arg(long)]
-    validate: bool,
-
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    args: Vec<String>,
-}
+# Lint (if installed)
+shellcheck cce.sh
 ```
 
-## Key Patterns
+There is no automated test suite. Verify changes by running the affected
+mode against a real `~/.config/cce/` directory — at minimum: `--help`,
+`--version`, the list/picker path, and one `cce <name>` invocation that
+hits `exec`.
 
-**Shell Execution Model:**
-```rust
-// Build shell command for sourcing env file and executing command
-let shell_cmd = format!(
-    ". '{}' && exec {} {}",
-    env_file.to_string_lossy().replace('\'', "'\\''"),
-    command,
-    args.join(" ")
-);
-```
+## Commit style
 
-**XDG Config Directory:**
-```rust
-// Check XDG_CONFIG_HOME first, then fall back to HOME/.config
-let config_dir = if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
-    if !xdg_config.trim().is_empty() {
-        PathBuf::from(xdg_config).join("cce")
-    } else {
-        get_home_config_dir()?
-    }
-} else {
-    get_home_config_dir()?
-};
-```
-
-**Environment Validation:**
-```rust
-const REQUIRED_VARS: &[&str] = &["ANTHROPIC_AUTH_TOKEN"];
-const OPTIONAL_VARS: &[&str] = &["ANTHROPIC_BASE_URL"];
-```
+Imperative, focused, atomic. Match the existing log
+(`git log --oneline`). Touch `cce.sh` and `README.md` (or `DESIGN.md`)
+together when behavior or internals change; doc-only and script-only
+commits are both fine when scope is genuinely separate.
