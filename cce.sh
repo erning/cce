@@ -1,89 +1,44 @@
 #!/usr/bin/env bash
+#
+# cce — Claude Code Environment Manager
+# https://github.com/erning/cce
+#
+# Run `cce --help` for usage. See README.md and DESIGN.md for details.
 
-# ==============================================================================
-# CCE (Claude Code Environment) Manager
-# ==============================================================================
-#
-# OVERVIEW:
-# --------
-# CCE is a shell script that allows you to manage multiple Claude Code
-# environments with different API configurations. It enables easy switching
-# between different API providers and authentication tokens without having
-# to manually set environment variables each time.
-#
-# USE CASES:
-# ----------
-# - Switch between different Claude API providers (e.g., GLM, Kimi, Minimax)
-# - Manage multiple API keys for different accounts or projects
-# - Quickly change API endpoints for testing different services
-# - Maintain separate configurations for development and production
-#
-# CONFIGURATION:
-# --------------
-# Environment files are stored in ~/.config/cce/ with the format:
-#   <name>.env
-#
-# Each environment file should contain export statements for:
-#   - ANTHROPIC_BASE_URL: The API endpoint URL
-#   - ANTHROPIC_AUTH_TOKEN: Your authentication token/key
-#
-# EXAMPLE ENVIRONMENT FILE (~/.config/cce/glm.env):
-#   export ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/anthropic"
-#   export ANTHROPIC_AUTH_TOKEN="your_token_here"
-#
-# USAGE:
-# -----
-# 1. List available environments (with interactive fzf selection if available):
-#    ./cce
-#
-# 2. Use a specific environment:
-#    ./cce <environment_name> [-- ARGS...]
-#
-# 3. Use custom command:
-#    ./cce -c claude-code <environment_name>
-#    ./cce --command echo <environment_name>
-#
-# 4. Examples:
-#    ./cce glm -- --help
-#    ./cce kimi-k2 -- "Write a Python script"
-#    ./cce minimax-m2 -- --version
-#
-# OPTIONS:
-# -------
-#   -c, --command <CMD>  Command executable to run [default: claude]
-#       --version        Print version
-#   -h, --help           Print help
-#
-# REQUIREMENTS:
-# ------------
-# - Claude Code CLI tool must be installed and accessible as 'claude'
-# - Environment directory: ~/.config/cce/ or $XDG_CONFIG_HOME/cce/
-# - Valid environment files with proper permissions
-#
-# ERROR HANDLING:
-# --------------
-# - If no environment name is provided, lists available environments
-# - If specified environment file doesn't exist, shows an error message
-# - Exits with appropriate error codes for debugging
-#
-# ==============================================================================
+set -euo pipefail
 
-set -e
+VERSION="2.1.1"
 
-VERSION="2.1.0"
+# Names allowed for environment files (without the .env suffix).
+# First char: letter, digit, or underscore. Subsequent chars may also
+# contain `.` and `-`. Rejects empty, leading dot/dash, whitespace,
+# control chars, path separators, and `..`.
+readonly NAME_RE='^[A-Za-z0-9_][A-Za-z0-9._-]*$'
 
-# Parse arguments
+# Defaults
 COMMAND="claude"
 ENV_NAME=""
 SHOW_HELP=false
 SHOW_VERSION=false
 ARGS=()
 
+# -----------------------------------------------------------------------------
+# Argument parsing
+# -----------------------------------------------------------------------------
+# Rule: the first positional argument is the environment name. Once it has
+# been consumed, every remaining token is forwarded verbatim to the target
+# command — there is no further flag parsing. An optional leading `--` after
+# NAME is consumed for back-compat with older invocations.
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     -c|--command)
       if [[ $# -lt 2 ]]; then
         echo "Error: --command requires an argument" >&2
+        exit 1
+      fi
+      if [[ -z "$2" ]]; then
+        echo "Error: --command requires a non-empty argument" >&2
         exit 1
       fi
       COMMAND="$2"
@@ -98,48 +53,85 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --)
-      shift
-      ARGS+=("$@")
-      break
+      # `--` before NAME has no useful meaning here. Reject it explicitly
+      # rather than silently dropping into list mode.
+      echo "Error: '--' must come after the environment name" >&2
+      exit 1
+      ;;
+    -*)
+      echo "Error: unknown option '$1'" >&2
+      echo "Run 'cce --help' for usage." >&2
+      exit 1
       ;;
     *)
-      if [[ -z "$ENV_NAME" ]]; then
-        ENV_NAME="$1"
-      else
-        ARGS+=("$1")
-      fi
+      ENV_NAME="$1"
       shift
+      # Optional `--` separator after NAME, kept for back-compat.
+      if [[ ${1:-} == "--" ]]; then
+        shift
+      fi
+      ARGS+=("$@")
+      break
       ;;
   esac
 done
 
-# Get config directory (XDG_CONFIG_HOME or ~/.config)
-if [[ -n "${XDG_CONFIG_HOME:-}" ]] && [[ -n "${XDG_CONFIG_HOME// /}" ]]; then
-  ENV_DIR="$XDG_CONFIG_HOME/cce"
+# -----------------------------------------------------------------------------
+# Config directory
+# -----------------------------------------------------------------------------
+# XDG spec: XDG_CONFIG_HOME must be an absolute path. Anything else falls
+# back to $HOME/.config.
+
+xdg=${XDG_CONFIG_HOME:-}
+if [[ -n "$xdg" && "$xdg" == /* ]]; then
+  ENV_DIR="$xdg/cce"
 else
+  if [[ -n "$xdg" && "$xdg" != /* ]]; then
+    echo "Warning: XDG_CONFIG_HOME is not an absolute path; ignoring" >&2
+  fi
+  if [[ -z "${HOME:-}" ]]; then
+    echo "Error: HOME is not set and XDG_CONFIG_HOME is not a usable absolute path" >&2
+    exit 1
+  fi
   ENV_DIR="$HOME/.config/cce"
 fi
 
-# Print version
+# -----------------------------------------------------------------------------
+# Help / version
+# -----------------------------------------------------------------------------
+
 if [[ "$SHOW_VERSION" == true ]]; then
   echo "cce $VERSION"
   exit 0
 fi
 
-# Print help
 print_help() {
-  echo "Claude Code Environment Manager"
-  echo ""
-  echo "Usage: cce [OPTIONS] [NAME] [-- ARGS...]"
-  echo ""
-  echo "Arguments:"
-  echo "  [NAME]      Environment name"
-  echo "  [ARGS...]   Arguments to pass to command"
-  echo ""
-  echo "Options:"
-  echo "  -c, --command <CMD>  Command executable to run [default: claude]"
-  echo "      --version        Print version"
-  echo "  -h, --help           Print help"
+  cat <<'EOF'
+Claude Code Environment Manager
+
+Usage: cce [OPTIONS] NAME [ARGS...]
+       cce [OPTIONS]                # list / interactive picker
+
+Loads <NAME>.env from the config directory and runs the target command
+with those environment variables. All ARGS after NAME are forwarded to
+the command unchanged.
+
+Arguments:
+  NAME      Environment name (must match [A-Za-z0-9_][A-Za-z0-9._-]*).
+  ARGS...   Arguments forwarded to the command.
+
+Options:
+  -c, --command <CMD>  Command executable to run [default: claude].
+      --version        Print version.
+  -h, --help           Print help.
+
+If NAME is omitted, lists available environments (interactive selection
+via fzf if installed).
+
+Config directory:
+  $XDG_CONFIG_HOME/cce/    (if XDG_CONFIG_HOME is set and absolute)
+  $HOME/.config/cce/       (otherwise)
+EOF
 }
 
 if [[ "$SHOW_HELP" == true ]]; then
@@ -147,98 +139,162 @@ if [[ "$SHOW_HELP" == true ]]; then
   exit 0
 fi
 
-# Print sorted environment names to stdout, one per line.
-# Avoids Bash 4+ namerefs so the script runs on stock macOS /bin/bash 3.2.
+# -----------------------------------------------------------------------------
+# Environment discovery
+# -----------------------------------------------------------------------------
+
+# Print sorted, valid environment names to stdout (one per line). Files
+# whose basename does not match $NAME_RE are skipped with a warning so the
+# picker never offers something the runner would reject.
 get_env_names() {
-  if [[ -d "$ENV_DIR" ]]; then
-    local f names=()
-    for f in "$ENV_DIR"/*.env; do
-      if [[ -f "$f" ]]; then
-        names+=("$(basename "$f" .env)")
-      fi
-    done
-    if [[ ${#names[@]} -gt 0 ]]; then
-      printf '%s\n' "${names[@]}" | sort
+  if [[ ! -d "$ENV_DIR" ]]; then
+    return 0
+  fi
+  local f base names=()
+  for f in "$ENV_DIR"/*.env; do
+    [[ -f "$f" ]] || continue
+    base=$(basename "$f" .env)
+    if [[ "$base" =~ $NAME_RE ]]; then
+      names+=("$base")
+    else
+      echo "Warning: skipping invalid env file name: '$base.env'" >&2
     fi
+  done
+  if [[ ${#names[@]} -gt 0 ]]; then
+    printf '%s\n' "${names[@]}" | sort
   fi
 }
 
-# Validate environment name (reject path traversal)
+# Reject names that would not survive validation. Called for every
+# user-supplied name before it touches the filesystem.
 validate_env_name() {
   local name="$1"
-  if [[ -z "$name" ]] || [[ "$name" == */* ]] || [[ "$name" == *\\* ]] || [[ "$name" == *..* ]]; then
-    echo "Error: Invalid environment name '$name'" >&2
+  if [[ -z "$name" || ! "$name" =~ $NAME_RE ]]; then
+    echo "Error: invalid environment name '$name'" >&2
+    echo "Names must start with a letter, digit, or underscore and contain only [A-Za-z0-9._-]." >&2
     exit 1
   fi
 }
 
-# List available environments
+# Print the usage hint and the available environment list. Takes the
+# already-discovered env names as positional arguments to avoid running
+# get_env_names twice (which would duplicate any "skipping invalid name"
+# warnings).
 list_environments() {
-  echo "Usage: cce [OPTIONS] [NAME] [-- ARGS...]"
-
-  local env_names=()
-  local name
-  while IFS= read -r name; do
-    env_names+=("$name")
-  done < <(get_env_names)
-
-  if [[ ${#env_names[@]} -eq 0 ]]; then
+  echo "Usage: cce [OPTIONS] NAME [ARGS...]"
+  if [[ $# -eq 0 ]]; then
     echo "No environments found."
     echo "Create environment files in: $ENV_DIR"
     if [[ ! -d "$ENV_DIR" ]]; then
       echo "Directory does not exist yet."
     fi
-  else
-    for name in "${env_names[@]}"; do
-      echo "  $name"
-    done
+    return
   fi
+  local n
+  for n in "$@"; do
+    echo "  $n"
+  done
 }
 
-# Check if first arg starts with '-', treat as showing list
-if [[ "$ENV_NAME" == -* ]]; then
-  list_environments
-  exit 0
-fi
+# -----------------------------------------------------------------------------
+# Mode dispatch — list / picker / run
+# -----------------------------------------------------------------------------
 
-# No environment name provided
 if [[ -z "$ENV_NAME" ]]; then
   env_names=()
   while IFS= read -r name; do
     env_names+=("$name")
   done < <(get_env_names)
 
-  # Try interactive fzf selection if available
-  if [[ ${#env_names[@]} -gt 0 ]] && command -v fzf &> /dev/null; then
-    selected=$(printf "%s\n" "${env_names[@]}" | fzf) || {
-      # User cancelled (ESC/q), show list
-      list_environments
-      exit 0
-    }
+  if [[ ${#env_names[@]} -gt 0 ]] && command -v fzf >/dev/null 2>&1; then
+    set +e
+    selected=$(printf '%s\n' "${env_names[@]}" | fzf)
+    fzf_status=$?
+    set -e
 
-    if [[ -n "$selected" ]]; then
-      ENV_NAME="$selected"
-    else
-      list_environments
-      exit 0
-    fi
+    case $fzf_status in
+      0)
+        ENV_NAME="$selected"
+        ;;
+      1|130)
+        # 1 = no match selected; 130 = SIGINT (Ctrl-C / Esc).
+        list_environments ${env_names[@]+"${env_names[@]}"}
+        exit 0
+        ;;
+      *)
+        echo "Error: fzf exited with status $fzf_status" >&2
+        exit 1
+        ;;
+    esac
   else
-    list_environments
+    list_environments ${env_names[@]+"${env_names[@]}"}
     exit 0
   fi
 fi
 
-# Validate environment name
+# -----------------------------------------------------------------------------
+# Run an environment
+# -----------------------------------------------------------------------------
+
 validate_env_name "$ENV_NAME"
 
-# Run environment
 ENV_FILE="$ENV_DIR/${ENV_NAME}.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Error: Environment file not found: $ENV_FILE" >&2
+  echo "Error: environment file not found: $ENV_FILE" >&2
   exit 1
 fi
 
-# Source the environment file and execute the command
+# Best-effort permission warning. GNU and BSD stat use different flags;
+# try both and only accept a purely-numeric result so a wrong-syntax stat
+# (e.g. GNU stat invoked with BSD-style `-f`, which prints filesystem
+# info instead of mode) cannot poison the arithmetic below.
+get_file_mode() {
+  local out
+  out=$(stat -c '%a' "$1" 2>/dev/null || true)
+  if [[ "$out" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$out"
+    return
+  fi
+  out=$(stat -f '%Lp' "$1" 2>/dev/null || true)
+  if [[ "$out" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$out"
+    return
+  fi
+}
+
+file_mode=$(get_file_mode "$ENV_FILE")
+if [[ -n "$file_mode" ]] && (( 8#$file_mode & 0022 )); then
+  echo "Warning: $ENV_FILE is writable by group or other (mode $file_mode)" >&2
+  echo "Consider: chmod 600 $ENV_FILE" >&2
+fi
+
+# Pre-validate the env file's bash syntax. Parse errors don't trigger the
+# ERR trap below (no command runs), so we catch them here for a clean error
+# that names the env file rather than letting bash's own parser message
+# appear with no `cce` context.
+if ! bash -n "$ENV_FILE" 2>/dev/null; then
+  echo "Error: syntax error in environment file: $ENV_FILE" >&2
+  bash -n "$ENV_FILE" 2>&1 | sed 's/^/  /' >&2 || true
+  exit 1
+fi
+
+# Source the environment file. An ERR trap adds context if anything inside
+# the file fails at runtime — `if ! . file; then` would put the source in
+# a tested context, which disables `set -e` inside the sourced file and
+# would mask real errors.
+trap 'echo "Error: failed while loading environment file: $ENV_FILE" >&2' ERR
+# shellcheck disable=SC1090  # env file path is intentionally dynamic
 . "$ENV_FILE"
-exec "$COMMAND" "${ARGS[@]}"
+trap - ERR
+
+# After sourcing, the env file may have changed PATH; verify $COMMAND now.
+if ! command -v "$COMMAND" >/dev/null 2>&1; then
+  echo "Error: command not found: $COMMAND" >&2
+  echo "Make sure '$COMMAND' is installed and on PATH." >&2
+  exit 127
+fi
+
+# `${ARGS[@]+"${ARGS[@]}"}` is the Bash 3.2 + `set -u` workaround for
+# expanding a possibly-empty array without tripping "unbound variable".
+exec "$COMMAND" ${ARGS[@]+"${ARGS[@]}"}

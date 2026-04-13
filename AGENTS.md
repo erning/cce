@@ -33,35 +33,55 @@ as stale and remove it.
   (3.2.57). That rules out `local -n` namerefs (Bash 4.3+),
   `mapfile`/`readarray` (Bash 4+), associative arrays, and `${var,,}`
   case conversion. Process substitution `< <(...)` and arrays are fine.
-- **Strict mode**: `set -e` is on. New code must keep working under it —
-  guard expected failures with `|| true` or explicit `if` blocks.
-- **No external deps** beyond the coreutils already assumed (`grep`,
-  `sort`, `printf`, `sed`, `basename`, `command`). `fzf` is optional and
-  detected at runtime.
+  Empty arrays under `set -u` need the workaround
+  `${arr[@]+"${arr[@]}"}` — Bash 3.2 errors on bare `"${arr[@]}"` when
+  the array is empty.
+- **Strict mode**: `set -euo pipefail` is on. New code must keep working
+  under all three — guard expected failures with `|| true` or explicit
+  `if` blocks, and use `${VAR:-default}` for any variable that may be
+  unset.
+- **Env name regex**: the only allowed env names are
+  `^[A-Za-z0-9_][A-Za-z0-9._-]*$`. The regex lives in the `NAME_RE`
+  constant near the top of `cce.sh` and is enforced both in
+  `validate_env_name` (CLI input) and in `get_env_names` (discovery).
+  Any code path that accepts a user-supplied name must call
+  `validate_env_name` before touching the filesystem.
+- **No external deps** beyond coreutils that ship with both BSD and
+  GNU systems (`printf`, `sort`, `basename`, `sed`, `stat`, `command`).
+  `fzf` is optional and detected at runtime. `stat` flags differ
+  between BSD and GNU — use the `get_file_mode` helper, which tries
+  both forms and validates the output is purely numeric.
 - **Unix only**. The script ends with `source` + `exec`; do not add
   Windows fallbacks.
-- **Security**: environment names are validated against `/`, `\`, `..`,
-  and empty before any filesystem lookup. Keep that check in front of
-  every new code path that uses a user-supplied name. Never log the
-  contents of an env file — only its path.
-- **Version**: hard-coded as `VERSION` near the top of `cce.sh`. Bump it
-  in the same commit as any user-visible change.
+- **Security**: never log the contents of an env file — only its path.
+  The script warns if an env file is group/world-writable but does not
+  refuse to load it.
+- **Source semantics**: load env files with `trap ... ERR` + bare `.`,
+  not `if ! . file; then`. The `if` form disables `set -e` inside the
+  sourced file and silently masks intermediate failures. There is also
+  a `bash -n` syntax pre-check for parse errors, which the `ERR` trap
+  cannot catch (no command runs on a parse failure).
+- **Version**: hard-coded as `VERSION` near the top of `cce.sh`. Bump
+  it in the same commit as any user-visible change.
 
 ## Working on the script
 
 ```bash
 # Run locally without installing
 ./cce.sh --help
-./cce.sh <name> -- <args...>
+./cce.sh <name> [args...]
 
-# Lint (if installed)
+# Lint
 shellcheck cce.sh
 ```
 
 There is no automated test suite. Verify changes by running the affected
 mode against a real `~/.config/cce/` directory — at minimum: `--help`,
-`--version`, the list/picker path, and one `cce <name>` invocation that
-hits `exec`.
+`--version`, the list/picker path, an unknown-flag rejection, and one
+`cce <name>` invocation that hits `exec`. For source/exec changes, also
+test with an env file that contains a deliberately-failing command and
+one with a deliberate parse error to confirm both error paths print a
+clear `cce` context line.
 
 ## Commit style
 

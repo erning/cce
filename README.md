@@ -39,14 +39,15 @@ chmod 600 ~/.config/cce/glm.env
 # 3. Use it
 cce              # interactive picker (fzf) or list
 cce glm          # run claude with the glm environment
-cce glm -- --help                      # pass flags through to claude
-cce -c claude-code glm -- "hello"      # use a different executable
+cce glm --help                  # everything after NAME is forwarded
+cce -c claude-code glm "hello"  # use a different executable
 ```
 
 ## Usage
 
 ```
-Usage: cce [OPTIONS] [NAME] [-- ARGS...]
+Usage: cce [OPTIONS] NAME [ARGS...]
+       cce [OPTIONS]                # list / interactive picker
 ```
 
 ### Arguments
@@ -54,17 +55,18 @@ Usage: cce [OPTIONS] [NAME] [-- ARGS...]
 | Argument  | Description                                                      |
 |-----------|------------------------------------------------------------------|
 | `NAME`    | Environment name. Resolves to `<config-dir>/<NAME>.env`.         |
-| `ARGS...` | Arguments forwarded to the target command (after `--`).          |
+| `ARGS...` | Arguments forwarded verbatim to the target command.              |
 
-`NAME` is the first non-option positional argument. Anything after a
-literal `--` is collected verbatim and passed to the command. Tokens that
-appear after `NAME` *without* a preceding `--` are also collected as
-`ARGS`, but use `--` whenever an arg starts with `-` so it is not mistaken
-for a `cce` flag.
+`NAME` is the first non-option positional argument. **Once `NAME` has been
+consumed, every remaining token is forwarded to the target command — `cce`
+performs no further flag parsing.** That means `cce glm --help` runs
+`claude --help` against the `glm` environment; you do *not* need a `--`
+separator. An optional leading `--` after `NAME` is consumed for
+backwards compatibility with older invocations.
 
-If `NAME` itself starts with `-` it is not treated as an environment name —
-`cce` falls back to listing / interactive selection. Always put flags
-*before* the environment name.
+`cce` flags must therefore appear **before** `NAME`. Unknown options
+before `NAME` (or any `-X` that is not one of the flags below) error out
+rather than being silently treated as an environment name.
 
 ### Options
 
@@ -80,12 +82,11 @@ If `NAME` itself starts with `-` it is not treated as an environment name —
 arguments:
 
 1. **Help / version** — `--help` or `--version`. Prints and exits 0.
-2. **Run a named environment** — `NAME` was provided and does not start
-   with `-`. Sources the environment file and `exec`s the command.
-3. **List or pick** — no `NAME` was provided (or it started with `-`). If
-   `fzf` is available *and* at least one environment exists, an
-   interactive picker is shown; otherwise the available environments are
-   listed.
+2. **Run a named environment** — `NAME` was provided. Sources the
+   environment file and `exec`s the command.
+3. **List or pick** — no `NAME` was provided. If `fzf` is available *and*
+   at least one environment exists, an interactive picker is shown;
+   otherwise the available environments are listed.
 
 ### Examples
 
@@ -96,11 +97,14 @@ cce
 # Run the default `claude` command with the glm environment
 cce glm
 
-# Pass arguments through to claude — note the `--` separator
-cce glm -- --model claude-3-opus "explain this codebase"
+# Pass arguments through to claude — no `--` needed
+cce glm --model claude-3-opus "explain this codebase"
+
+# `--` after NAME still works for muscle-memory back-compat
+cce glm -- --version
 
 # Use a custom executable (claude-code) with the kimi-k2 environment
-cce --command claude-code kimi-k2 -- --version
+cce --command claude-code kimi-k2 --version
 
 # Same, using the short flag
 cce -c claude-code kimi-k2
@@ -111,7 +115,8 @@ cce -c claude-code kimi-k2
 | Code  | Meaning                                                            |
 |-------|--------------------------------------------------------------------|
 | `0`   | Success: command ran (and the command itself exited 0), or help/version was printed. |
-| `1`   | An error originating from `cce` itself: invalid name, missing file, bad arguments. |
+| `1`   | An error originating from `cce` itself: invalid name, missing file, bad arguments, source failure. |
+| `127` | The target command (`-c <CMD>`) was not found on `PATH` after the env file was sourced. |
 | other | Forwarded from the target command after `exec`.                    |
 
 ## Configuration
@@ -124,9 +129,13 @@ single directory. The directory location follows the
 
 The directory is resolved at startup as follows:
 
-1. If `XDG_CONFIG_HOME` is set **and** non-empty (after stripping spaces),
-   use `$XDG_CONFIG_HOME/cce/`.
+1. If `XDG_CONFIG_HOME` is set **and** is an absolute path (per the XDG
+   spec), use `$XDG_CONFIG_HOME/cce/`. A non-absolute value is rejected
+   with a warning and `cce` falls back to step 2.
 2. Otherwise use `$HOME/.config/cce/`.
+
+If neither yields a usable directory (`HOME` unset and `XDG_CONFIG_HOME`
+not absolute), `cce` errors out at startup.
 
 `cce` does not create the directory for you. If it does not exist, listing
 reports it as empty rather than failing.
@@ -148,6 +157,11 @@ Rules:
   are ignored by discovery.
 - The environment name is the filename with the `.env` suffix stripped,
   so `kimi-k2.env` is the environment `kimi-k2`.
+- Names must match `^[A-Za-z0-9_][A-Za-z0-9._-]*$` — they must start
+  with a letter, digit, or underscore, and may contain only letters,
+  digits, dots, hyphens, and underscores. Files with names outside this
+  set are skipped during discovery with a warning, and `cce <bad-name>`
+  on the command line errors out.
 - Discovery is non-recursive — only the top level of the config directory
   is scanned.
 - Listing is sorted alphabetically by name.
@@ -194,12 +208,15 @@ else the command understands.
 
 - Environment files contain API tokens. Restrict their permissions
   (`chmod 600`) and keep the directory out of any backups or sync targets
-  that you do not control.
+  that you do not control. `cce` prints a best-effort warning at runtime
+  if the env file is group- or world-writable.
 - `cce` never logs the contents of environment files; only their paths
   appear in error messages.
-- Environment **names** passed on the command line are validated to
-  prevent path traversal (rejected if they contain `/`, `\`, `..`, or are
-  empty). Implementation details in [DESIGN.md](DESIGN.md#environment-name-validation).
+- Environment **names** passed on the command line are validated against
+  the same whitelist as discovery (`^[A-Za-z0-9_][A-Za-z0-9._-]*$`),
+  which rejects empty names, leading dots, leading dashes, path
+  separators, `..`, whitespace, and control characters. Implementation
+  details in [DESIGN.md](DESIGN.md#environment-name-validation).
 
 ## How it works
 
