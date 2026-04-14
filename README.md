@@ -84,9 +84,11 @@ arguments:
 1. **Help / version** — `--help` or `--version`. Prints and exits 0.
 2. **Run a named environment** — `NAME` was provided. Sources the
    environment file and `exec`s the command.
-3. **List or pick** — no `NAME` was provided. If `fzf` is available *and*
-   at least one environment exists, an interactive picker is shown;
-   otherwise the available environments are listed.
+3. **List or pick** — no `NAME` was provided. If `fzf` is available, at
+   least one environment exists, **and stdin is a terminal**, an
+   interactive picker is shown. Otherwise (no fzf, no environments, or a
+   non-interactive stdin such as a pipe / CI run) the available
+   environments are listed.
 
 ### Examples
 
@@ -196,12 +198,15 @@ Comments start with `#` and are ignored by Bash.
 
 | Variable               | Required | Purpose                                  |
 |------------------------|----------|------------------------------------------|
-| `ANTHROPIC_AUTH_TOKEN` | Yes\*    | Authentication token for the API.        |
-| `ANTHROPIC_API_KEY`    | Yes\*    | Legacy alias for the auth token. Either this or `ANTHROPIC_AUTH_TOKEN` must be set. |
-| `ANTHROPIC_BASE_URL`   | No       | API endpoint URL. Provider-default if absent. |
+| `ANTHROPIC_API_KEY`    | Yes\*    | Sent by `claude` as the `x-api-key` header. Use this for Anthropic first-party API keys. |
+| `ANTHROPIC_AUTH_TOKEN` | Yes\*    | Sent by `claude` as `Authorization: Bearer <value>`. Use this for OAuth tokens and for custom providers that speak the Anthropic schema with bearer auth. |
+| `ANTHROPIC_BASE_URL`   | No       | API endpoint URL. Provider default if absent. |
 
-\* At least one of `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` must be
-set. `claude` accepts either name; the newer one is `ANTHROPIC_AUTH_TOKEN`.
+\* At least one auth variable must be set; which one depends on your
+provider. Anthropic's first-party API takes `ANTHROPIC_API_KEY`; OAuth
+flows and most alternative Claude-compatible providers take
+`ANTHROPIC_AUTH_TOKEN`. The two variables are **not aliases** — they
+populate different HTTP headers, so pick the one your provider expects.
 
 `cce` itself does not interpret these variables — it just sources the
 file and `exec`s the target command. The target command (usually

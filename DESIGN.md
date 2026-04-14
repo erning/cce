@@ -57,21 +57,24 @@ A run of `cce` proceeds through these stages:
 4. **Environment name validation.** Before any file lookup that uses
    `_CCE_ENV_NAME`, the name is checked against the whitelist (see below).
 5. **Permission warning.** A best-effort `stat` lookup warns if the env
-   file is group- or world-writable.
+   *file* is group- or world-writable. The config *directory* is
+   intentionally not checked — see "Non-goals" below.
 6. **Syntax pre-check.** `bash -n "$_CCE_ENV_FILE"` validates the env file
    parses cleanly, with a `cce`-context error if it does not. Parse
    errors do not trigger the runtime `ERR` trap below (no command runs),
    so we catch them here.
 7. **Source.** The env file is sourced into the current shell. An `ERR`
-   trap is armed so that a runtime command failure inside the env file
-   prints a context line naming the file. The trap is cleared
-   immediately after the source returns.
-8. **Command sanity check.** `command -v "$_CCE_COMMAND"` runs *after*
-   sourcing — the env file is allowed to modify `PATH`. If the command
-   is not on `PATH` we exit 127 with a clear message instead of letting
-   `exec` print bash's own error.
-9. **Exec.** `exec "$_CCE_COMMAND" ${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}` replaces the
-   `cce` process with the target command.
+   trap is armed (via `builtin trap`) so that a runtime command failure
+   inside the env file prints a context line naming the file. The trap
+   is cleared immediately after the source returns, also via `builtin
+   trap` — see "Why `builtin` prefixes the post-source call sites" for
+   why the prefix matters.
+8. **Command sanity check.** `builtin command -v "$_CCE_COMMAND"` runs
+   *after* sourcing — the env file is allowed to modify `PATH`. If the
+   command is not on `PATH` we exit 127 with a clear message instead of
+   letting `exec` print bash's own error.
+9. **Exec.** `builtin exec "$_CCE_COMMAND" ${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}`
+   replaces the `cce` process with the target command.
 
 ## Environment name validation
 
@@ -124,27 +127,54 @@ The function deliberately avoids Bash 4+ features (`local -n` namerefs,
 
 ## Interactive selection
 
-When `_CCE_ENV_NAME` is empty, `cce` checks `command -v fzf`. If `fzf` is
-available *and* at least one environment exists, it pipes the sorted
-names into `fzf` and inspects the exit code explicitly:
+When `_CCE_ENV_NAME` is empty, `cce` checks three conditions before
+showing fzf: `fzf` is on `PATH`, at least one valid environment exists,
+**and stdin is a terminal** (`[[ -t 0 ]]`). If any of those is false,
+the list path is taken instead:
 
 ```bash
-set +e
-selected=$(printf '%s\n' "${env_names[@]}" | fzf)
-fzf_status=$?
-set -e
+if [[ ${#env_names[@]} -gt 0 ]] \
+    && command -v fzf >/dev/null 2>&1 \
+    && [[ -t 0 ]]; then
+  set +e
+  selected=$(printf '%s\n' "${env_names[@]}" | fzf)
+  fzf_status=$?
+  set -e
 
-case $fzf_status in
-  0)     _CCE_ENV_NAME="$selected" ;;
-  1|130) list_environments "${env_names[@]}"; exit 0 ;;  # no-match or SIGINT
-  *)     echo "Error: fzf exited with status $fzf_status" >&2; exit 1 ;;
-esac
+  case $fzf_status in
+    0)     _CCE_ENV_NAME="$selected" ;;
+    1|130) list_environments "${env_names[@]}"; exit 0 ;;  # no-match or SIGINT
+    *)     echo "Error: fzf exited with status $fzf_status" >&2; exit 1 ;;
+  esac
+else
+  list_environments "${env_names[@]}"
+  exit 0
+fi
 ```
 
-The previous version treated *every* fzf failure as a user cancellation,
-which silently masked terminal-not-a-TTY, broken-pipe, and crash cases.
-The explicit case lets unexpected statuses surface as an error rather
-than dropping the user into a confusing "no environments selected" path.
+The TTY guard matters for piped or CI invocations (`echo "" | cce`,
+`cce </dev/null`, cron, git hooks). Without it, `fzf` would either
+hang on `/dev/tty` or exit noisily on systems with no controlling
+terminal — neither is a good default for a script that is usefully
+embeddable in pipelines. With the guard, those invocations cleanly
+fall through to the plain listing.
+
+The previous version also treated *every* fzf failure as a user
+cancellation, which silently masked terminal-not-a-TTY, broken-pipe,
+and crash cases. The explicit `case` lets unexpected statuses surface
+as an error rather than dropping the user into a confusing "no
+environments selected" path.
+
+### fzf exit code 1 vs. 130
+
+Both `1` (no match selected) and `130` (SIGINT — Esc / Ctrl-C) fall
+through to the same `list_environments` call. Differentiating them
+(e.g. silent exit on 130, list on 1) was considered and rejected:
+seeing the list after cancelling is harmless and occasionally useful
+(it reminds you what's available), while the extra branch adds code
+for a purely subjective win. If this ever becomes annoying, it is a
+one-line change; there is no structural obstacle to splitting the
+cases later.
 
 If a name is selected, control falls through to the normal run path —
 the `--command` and any trailing `_CCE_ARGS` collected during parsing are
@@ -220,3 +250,76 @@ immediately before the env file is sourced. Two reasons, in order:
    a different path than a failed command, so the `ERR` trap's context
    line is not guaranteed to fire on this specific failure — bash's
    own error message is already unambiguous.
+
+### Why `builtin` prefixes the post-source call sites
+
+Readonly protects cce's *variables* but not its *builtin calls*. An env
+file is ordinary bash, so it can just as easily define a shell function
+with the same name as a builtin:
+
+```bash
+# evil.env
+export ANTHROPIC_AUTH_TOKEN=fake
+exec() { echo "hijacked $*"; }
+```
+
+That function definition survives the `source` call. Without a guard,
+`cce.sh`'s final `exec "$_CCE_COMMAND" …` resolves to the env file's
+`exec` function — the target command never replaces the cce process,
+and the user sees `hijacked /bin/echo …` instead of their command
+actually running. The same attack works against `command -v` (the
+post-source PATH check) and `trap - ERR` (the loading-trap cleanup).
+
+The fix is the `builtin` prefix. `builtin NAME` tells bash to look
+`NAME` up in the builtin table and skip function lookup entirely, so
+the actual `exec` / `command` / `trap` runs regardless of what the
+env file defined:
+
+```bash
+builtin trap 'echo "Error: ..." >&2' ERR
+. "$_CCE_ENV_FILE"
+builtin trap - ERR
+
+if ! builtin command -v "$_CCE_COMMAND" >/dev/null 2>&1; then
+  ...
+fi
+
+builtin exec "$_CCE_COMMAND" ${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}
+```
+
+This is not a full sandbox — it is a footgun guard. An env file that
+defines a function literally named `builtin` would defeat the prefix,
+and at that point the env file is actively adversarial rather than
+accidentally shadowing a common name. That case is intentionally out
+of scope: the env file is user-supplied bash code, so the trust
+boundary is "don't run env files from untrusted sources", not "cce
+sandboxes arbitrary bash".
+
+## Non-goals
+
+A few things cce deliberately does **not** do, so future contributors
+don't re-add them thinking the omission was an oversight.
+
+- **Config directory permission checks.** `cce` warns only on a
+  group/world-writable *env file*, not on the directory that holds it.
+  The trust model is already "the env file is user-supplied bash code":
+  if an attacker can write files inside `~/.config/cce/`, they can also
+  ship one with arbitrary content and the per-file check would catch
+  that at load time. Warning on the directory as well would be noisy
+  on shared XDG setups without meaningfully raising the security bar,
+  so the check stays file-only.
+- **Refusing to load on permission warnings.** The warning is
+  advisory. `cce` still sources a world-writable env file and still
+  execs the target command. This matches the "warn, don't block"
+  convention of `ssh` on `~/.ssh/config` mode bits.
+- **fzf file-owner checks, symlink following rules, parent-chain
+  audits, etc.** All of the above are beyond the intended footprint
+  of a ~300-line shell script whose sole job is to splice a `.env`
+  file in front of another command.
+- **Full sandboxing of env files.** As noted in the `builtin`
+  subsection above, an env file is arbitrary bash. The `builtin`
+  prefix, `readonly` internal variables, and the syntax pre-check
+  together block the most common accidental footguns, but they are
+  not a security boundary against a deliberately hostile env file.
+  Review files you source, the same way you review `.envrc` or
+  `.bashrc` snippets you paste from the internet.

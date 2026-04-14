@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-VERSION="2.1.2"
+VERSION="2.1.3"
 
 # Names allowed for environment files (without the .env suffix).
 # First char: letter, digit, or underscore. Subsequent chars may also
@@ -291,13 +291,21 @@ readonly _CCE_COMMAND _CCE_ENV_DIR _CCE_ENV_NAME _CCE_ENV_FILE _CCE_ARGS
 # the file fails at runtime — `if ! . file; then` would put the source in
 # a tested context, which disables `set -e` inside the sourced file and
 # would mask real errors.
-trap 'echo "Error: failed while loading environment file: $_CCE_ENV_FILE" >&2' ERR
+#
+# Every builtin called after the source uses the `builtin` prefix. An env
+# file is free to define shell functions with the same name as a bash
+# builtin (e.g. `exec() { … }`), and those definitions persist in our
+# shell after the source returns. Without `builtin`, the final `exec`
+# call would invoke the env file's function and the target command would
+# never replace the cce process. See DESIGN.md → "Source and exec" for
+# the full threat model.
+builtin trap 'echo "Error: failed while loading environment file: $_CCE_ENV_FILE" >&2' ERR
 # shellcheck disable=SC1090  # env file path is intentionally dynamic
 . "$_CCE_ENV_FILE"
-trap - ERR
+builtin trap - ERR
 
 # After sourcing, the env file may have changed PATH; verify $_CCE_COMMAND now.
-if ! command -v "$_CCE_COMMAND" >/dev/null 2>&1; then
+if ! builtin command -v "$_CCE_COMMAND" >/dev/null 2>&1; then
   echo "Error: command not found: $_CCE_COMMAND" >&2
   echo "Make sure '$_CCE_COMMAND' is installed and on PATH." >&2
   exit 127
@@ -305,4 +313,4 @@ fi
 
 # `${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}` is the Bash 3.2 + `set -u` workaround
 # for expanding a possibly-empty array without tripping "unbound variable".
-exec "$_CCE_COMMAND" ${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}
+builtin exec "$_CCE_COMMAND" ${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}

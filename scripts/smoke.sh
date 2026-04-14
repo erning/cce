@@ -343,6 +343,39 @@ run_cce -c /bin/sh nocollide -c 'echo "$PROBE_ENV_NAME"'
 expect_exit 0 "plain ENV_NAME/COMMAND/ENV_DIR in env file do not collide"
 expect_stdout_eq "production" "unprefixed names are free for user use"
 
+section "Function shadowing of post-source builtins"
+
+# An env file is ordinary bash and can define shell functions. Without the
+# `builtin` prefix at cce's post-source call sites, a function named `exec`
+# in the env file would hijack the final exec and the target command would
+# never run. Same story for `command` (the post-source PATH check) and
+# `trap` (the ERR cleanup).
+cat >"$CONF/shadow_builtins.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+exec() {
+  echo "HIJACKED_EXEC $*" >&2
+  return 0
+}
+command() {
+  echo "HIJACKED_COMMAND $*" >&2
+  return 0
+}
+trap() {
+  echo "HIJACKED_TRAP $*" >&2
+  return 0
+}
+EOF
+chmod 600 "$CONF/shadow_builtins.env"
+
+run_cce -c /bin/echo shadow_builtins real-arg
+expect_exit 0 "shadowed exec/command/trap do not break the run"
+expect_stdout_eq "real-arg" "real /bin/echo ran (exec not hijacked)"
+if [[ "$stderr" != *HIJACKED_* ]]; then
+  pass "no shadowed function fired during the run"
+else
+  fail "no shadowed function fired during the run" "stderr=$stderr"
+fi
+
 section "Non-TTY fzf downgrade"
 
 # Stand up a stub `fzf` on PATH that would scream if invoked. If the TTY
@@ -397,10 +430,19 @@ expect_stdout_eq "" "empty ARGS produces empty stdout (no unbound-var crash)"
 
 section "Lint baseline"
 
-if bash -n "$CCE" 2>"$TMP/_lint"; then
-  pass "bash -n cce.sh"
+# cce.sh must run on stock macOS /bin/bash (3.2). Prefer that binary for the
+# `bash -n` parse check so Nix / Homebrew Bash 5.x on PATH can't silently
+# mask a 3.2-only parse error. Fall back to whatever `bash` resolves to on
+# non-macOS systems where /bin/bash may not exist.
+SYNTAX_BASH="/bin/bash"
+if [[ ! -x "$SYNTAX_BASH" ]]; then
+  SYNTAX_BASH=$(command -v bash)
+fi
+
+if "$SYNTAX_BASH" -n "$CCE" 2>"$TMP/_lint"; then
+  pass "$SYNTAX_BASH -n cce.sh"
 else
-  fail "bash -n cce.sh" "$(cat "$TMP/_lint")"
+  fail "$SYNTAX_BASH -n cce.sh" "$(cat "$TMP/_lint")"
 fi
 
 if command -v shellcheck >/dev/null 2>&1; then
