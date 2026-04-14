@@ -227,16 +227,11 @@ else the command understands.
   separators, `..`, whitespace, and control characters. Implementation
   details in [DESIGN.md](DESIGN.md#environment-name-validation).
 - **Environment files are not sandboxed.** An env file is ordinary Bash,
-  sourced into the running shell with full language access — command
-  substitution, file I/O, arbitrary function definitions, `PATH`
-  changes, the lot. `cce` uses `readonly` internal variables and
-  `builtin` prefixes on the post-source control-flow calls
-  (`exec`/`command`/`trap`/`exit`) to block the most common accidental
-  footguns, but these are **footgun guards, not a security boundary**.
-  Treat an env file the same way you would treat a `.bashrc` snippet:
-  only source files you wrote or would be willing to run by hand.
-  Full rationale and non-goals in
-  [DESIGN.md](DESIGN.md#non-goals).
+  sourced into the running shell with full language access. Treat it
+  the same way you would treat a `.bashrc` snippet: only source files
+  you wrote or would be willing to run by hand. See
+  [DESIGN.md](DESIGN.md#non-goals) for the trust model and why `cce`
+  deliberately does not try to defend against adversarial env files.
 
 ## How it works
 
