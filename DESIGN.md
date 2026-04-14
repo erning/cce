@@ -187,9 +187,10 @@ reused verbatim.
 The run path is deliberately small but defensive:
 
 ```bash
-trap 'echo "Error: failed while loading environment file: $_CCE_ENV_FILE" >&2' ERR
+builtin trap 'echo "Error: failed while loading environment file: $_CCE_ENV_FILE" >&2; builtin exit 1' ERR
 . "$_CCE_ENV_FILE"
-trap - ERR
+builtin trap - ERR
+set -euo pipefail
 ```
 
 ### Why `trap ERR` and not `if ! . file`
@@ -208,12 +209,115 @@ a tested expression, and **`set -e` is disabled for them** — including
 inside the file being sourced. A `false` (or any failing command) in
 the env file would *not* abort sourcing; the script would happily
 continue with a half-loaded environment. The `ERR` trap pattern keeps
-`set -e` active inside the sourced file, so partial loads always abort.
+error reporting wired up regardless of the tested-context rules.
 
-There is one failure mode the `ERR` trap does not catch: a Bash *parse*
-error inside the env file, because no command actually runs. We catch
-those upfront with a `bash -n "$_CCE_ENV_FILE"` syntax pre-check that prints
-the bad-syntax error indented under a clear `cce` context line.
+### Why the ERR trap actively exits
+
+The trap body ends with `builtin exit 1` rather than relying on
+`set -e` to abort for it. Both are documented ways to fail a shell
+script, but they differ in one crucial detail: `set -e` can be
+toggled off from inside the sourced file. An env file that writes
+`set +e` — intentionally or by mistake — leaves cce's shell with
+error-on-failure disabled, so even though the ERR trap still fires
+on `false`, nothing actually aborts the script. The reviewer's
+reproduction was:
+
+```bash
+# probe.env
+set +e
+false
+export X=after
+```
+
+Without the active `exit`, cce would print the "failed while loading"
+context line, then calmly continue past the source, past the
+`command -v` check, and `exec` the target command with `X=after` in
+its environment. That is the opposite of a safe partial-load.
+
+With `builtin exit 1` in the trap body, the `false` still triggers
+the trap; the trap prints its context and exits 1; cce aborts before
+exec. The `builtin` prefix on `exit` matters for the same reason it
+matters on `exec`/`trap`/`command` — see "Why `builtin` prefixes the
+post-source call sites" below.
+
+### Restoring strict mode after source
+
+The env file runs inside cce's own shell, so any `set +e` / `set +u`
+/ `set +o pipefail` it performs persists in cce's state after the
+source returns. To keep the post-source path (command lookup and
+exec) running under the same guarantees as the top of the script,
+cce re-enables all three immediately after source:
+
+```bash
+. "$_CCE_ENV_FILE"
+builtin trap - ERR
+set -euo pipefail
+```
+
+This is cheap and idempotent in the success path, and it prevents a
+`set +u` in the env file from silently turning subsequent unset-var
+references into empty strings inside cce.
+
+Note that re-enabling strict mode does **not** affect the target
+command. Shell options are shell-internal state; `exec` replaces the
+process and the target starts with whatever options its own shell (if
+any) chooses. The restore only hardens the handful of lines between
+the source return and the final `exec`.
+
+### Failure modes the ERR trap does NOT catch
+
+A handful of bash failures exit the sourced file before any command
+actually runs, which means the `ERR` trap never fires and users see
+bash's raw error with no cce context:
+
+- **Parse errors.** E.g. an unclosed `$(`. Bash prints
+  `env_file: line N: syntax error ...` and never runs a command.
+  We catch this class upfront with a `bash -n "$_CCE_ENV_FILE"`
+  syntax pre-check so the error can be indented under a clear `cce`
+  context line.
+- **Parameter-expansion errors.** E.g. `echo ${MISSING?missing var}`,
+  or Bash 4-only expansions like `${FOO,,}` hitting Bash 3.2. Bash
+  aborts the sourced file with its own error (`env_file: line N:
+  MISSING: missing var`) and no ERR trap runs. Unlike parse errors,
+  we cannot pre-check these: expansion happens at runtime and depends
+  on the surrounding state. `cce` still exits non-zero (sourcing
+  returned non-zero, and `set -e` is active in the caller), it just
+  does so without the friendly "failed while loading environment
+  file" prefix.
+
+If cce is ever expected to wrap expansion errors with its own
+context, the only workable approach is to source inside a subshell
+and parse its output — significantly more invasive than the current
+design warrants for a diagnostic-message improvement.
+
+### Env files can modify traps and shell options during source
+
+Because the env file is ordinary bash, it can install its own ERR
+trap or disarm cce's:
+
+```bash
+trap - ERR              # removes cce's trap entirely
+trap '...' ERR          # replaces it
+trap '...; return 0' ERR  # fires, returns early from source with status 0
+```
+
+cce's defence is partial and best-effort:
+
+1. The post-source `builtin trap - ERR` guarantees no carried-over
+   trap survives into the command-lookup / exec path — even if the
+   env file installed one, it is removed before cce uses bash again.
+2. `set -euo pipefail` is re-enabled post-source, so any `set +e` /
+   `set +u` / `set +o pipefail` from inside the source cannot leak
+   into cce's own code.
+3. However, cce cannot prevent the env file from owning shell state
+   *during* the source itself. A deliberately written
+   `trap '…; return 0' ERR` will cause the source to return 0 on
+   failure, and cce will dutifully proceed to exec the target — the
+   env file has explicitly opted out of the abort contract, and
+   that is the env file's prerogative.
+
+See "Non-goals" at the bottom of this file for the full statement of
+the trust boundary.
 
 ### Consequences of source + exec
 
@@ -339,3 +443,22 @@ don't re-add them thinking the omission was an oversight.
   not a security boundary against a deliberately hostile env file.
   Review files you source, the same way you review `.envrc` or
   `.bashrc` snippets you paste from the internet.
+- **Preventing in-source trap / shell-option subversion.** During the
+  `source` call itself the env file owns shell state: it can install
+  its own ERR trap, disarm cce's, toggle `set -e`, redirect file
+  descriptors, and so on. cce mitigates the spill-over by actively
+  exiting from the ERR trap body, by disarming the trap again
+  post-source, and by restoring `set -euo pipefail` once the source
+  returns — but it cannot police what runs during the source itself.
+  An env file that explicitly installs `trap '…; return 0' ERR` to
+  swallow failures will be respected, and cce will proceed to exec
+  the target as if the source succeeded. Same trust boundary as
+  above: if you source it, you trust it.
+- **Wrapping bash expansion / substitution errors with cce context.**
+  Failures like `${MISSING?err}` or a Bash 4-only expansion hitting
+  Bash 3.2 abort the sourced file before any command runs, so the
+  runtime ERR trap cannot fire. Bash's own error surfaces without a
+  cce prefix. Catching these would require sourcing inside a
+  subshell and parsing its output — significantly more invasive than
+  the diagnostic improvement warrants. cce still exits non-zero on
+  these failures; only the context line is missing.

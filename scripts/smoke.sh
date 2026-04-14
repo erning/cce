@@ -266,6 +266,75 @@ run_cce -c /bin/echo runtime_fail
 expect_exit 1 "runtime command failure inside env file exits 1"
 expect_stderr_has "failed while loading environment file" "runtime failure has ERR-trap context"
 
+section "Strict mode restoration across source"
+
+# An env file that sets `set +e` then fails must still abort cce. Prior
+# behavior: ERR trap printed but returned, set +e leaked past the source
+# boundary, and the target command ran with whatever state the env file
+# had assembled. The fix is an active `builtin exit 1` in the trap body
+# plus `set -euo pipefail` restore after source.
+cat >"$CONF/setplus_e_fail.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+set +e
+false
+export SHOULD_NOT_LEAK=1
+EOF
+chmod 600 "$CONF/setplus_e_fail.env"
+
+run_cce -c /bin/echo setplus_e_fail arg
+expect_exit 1 "set +e; false in env file aborts cce"
+expect_stderr_has "failed while loading environment file" "active ERR trap fires under set +e"
+expect_stdout_eq "" "target command never runs after set +e abort"
+
+# Positive control: `set +u` without any failure must NOT abort. The
+# source completes, cce restores strict mode post-source, and the target
+# command still runs normally.
+cat >"$CONF/setplus_u_ok.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+set +u
+export HELLO=world
+EOF
+chmod 600 "$CONF/setplus_u_ok.env"
+
+# shellcheck disable=SC2016  # the inner $var is expanded by /bin/sh, not us
+run_cce -c /bin/sh setplus_u_ok -c 'echo "$HELLO"'
+expect_exit 0 "set +u without failure does not derail success path"
+expect_stdout_eq "world" "exported vars still reach target after set +u"
+
+# Expansion errors bypass the ERR trap (bash aborts the source before
+# any command runs), so the friendly cce context line is absent — but
+# cce still exits non-zero. Pins current behavior per DESIGN.md's
+# "Failure modes the ERR trap does NOT catch" subsection.
+cat >"$CONF/expansion_err.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+: "${MISSING_VAR_XYZ?missing var for smoke test}"
+export AFTER_EXPANSION=run
+EOF
+chmod 600 "$CONF/expansion_err.env"
+
+run_cce -c /bin/echo expansion_err
+expect_exit 1 "expansion error in env file aborts cce"
+expect_stderr_has "MISSING_VAR_XYZ" "expansion error surfaces via bash's own message"
+
+# trap - ERR; false: env file disarms the cce ERR trap, then triggers a
+# failure. set -e is still in effect (we did not set +e), so the shell
+# exits anyway — just without cce's context line. Pins the "disarm
+# falls through to set -e" branch of DESIGN's Non-goals entry.
+cat >"$CONF/disarm_err.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+trap - ERR
+false
+EOF
+chmod 600 "$CONF/disarm_err.env"
+
+run_cce -c /bin/echo disarm_err
+expect_exit 1 "trap - ERR; false in env file still aborts (via set -e)"
+if [[ "$stderr" != *"failed while loading environment file"* ]]; then
+  pass "trap - ERR removes cce's context line (documented limit)"
+else
+  fail "trap - ERR removes cce's context line" "cce context unexpectedly present"
+fi
+
 section "Command resolution"
 
 run_cce -c /no/such/binary probe

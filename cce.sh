@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-VERSION="2.1.4"
+VERSION="2.1.5"
 
 # Names allowed for environment files (without the .env suffix).
 # First char: letter, digit, or underscore. Subsequent chars may also
@@ -282,15 +282,24 @@ fi
 # Lock down cce's internal state before handing control to the env file.
 # The `_CCE_` prefix is intentional: it reduces accidental collisions with
 # variable names a user might legitimately set in their env file (e.g.
-# `ENV_NAME=production`). Marking them readonly also means any assignment
-# to these exact names — accidental or malicious — aborts sourcing via
-# the ERR trap below with a clear "readonly variable" message.
+# `ENV_NAME=production`). Marking them readonly also causes any assignment
+# to these exact names — accidental or malicious — to fail: bash prints a
+# "readonly variable" message and the sourced file aborts. Note that
+# bash's readonly-assignment error exits through a different path than a
+# failed command, so the ERR trap below may not add its own context line
+# on this specific failure; bash's own message is already unambiguous.
 readonly _CCE_COMMAND _CCE_ENV_DIR _CCE_ENV_NAME _CCE_ENV_FILE _CCE_ARGS
 
-# Source the environment file. An ERR trap adds context if anything inside
-# the file fails at runtime — `if ! . file; then` would put the source in
-# a tested context, which disables `set -e` inside the sourced file and
-# would mask real errors.
+# Source the environment file. The ERR trap both prints a context line
+# *and* actively exits — it does not rely on `set -e` to abort, because
+# an env file is free to `set +e` (either accidentally or as a local
+# escape) and that would otherwise leak past the source boundary and
+# let cce continue with a half-loaded environment.
+#
+# A common `if ! . file; then` pattern is wrong here for a different
+# reason: bash disables `set -e` inside the tested expression, masking
+# real failures inside the sourced file. The trap pattern sidesteps
+# that.
 #
 # Every builtin called after the source uses the `builtin` prefix. An env
 # file is free to define shell functions with the same name as a bash
@@ -299,10 +308,18 @@ readonly _CCE_COMMAND _CCE_ENV_DIR _CCE_ENV_NAME _CCE_ENV_FILE _CCE_ARGS
 # call would invoke the env file's function and the target command would
 # never replace the cce process. See DESIGN.md → "Source and exec" for
 # the full threat model.
-builtin trap 'echo "Error: failed while loading environment file: $_CCE_ENV_FILE" >&2' ERR
+builtin trap 'echo "Error: failed while loading environment file: $_CCE_ENV_FILE" >&2; builtin exit 1' ERR
 # shellcheck disable=SC1090  # env file path is intentionally dynamic
 . "$_CCE_ENV_FILE"
 builtin trap - ERR
+
+# Restore strict mode. The env file may have toggled any of `set -e`,
+# `set -u`, or `set -o pipefail` off (intentionally or not), and those
+# changes persist in cce's shell after the source returns. Re-enabling
+# them here keeps the rest of cce — the command-lookup branch and the
+# final exec — running under the same guarantees as the top of the
+# script. `set -euo pipefail` is cheap and idempotent.
+set -euo pipefail
 
 # After sourcing, the env file may have changed PATH; verify $_CCE_COMMAND now.
 if ! builtin command -v "$_CCE_COMMAND" >/dev/null 2>&1; then
