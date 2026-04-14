@@ -28,8 +28,8 @@ The script runs under `set -euo pipefail`:
 - `-e` exits on any uncaught command failure.
 - `-u` treats unset variables as errors. Most call sites use
   `${VAR:-default}` to be explicit; the array passthrough at `exec` uses
-  the Bash 3.2-compatible workaround `${ARGS[@]+"${ARGS[@]}"}`, which
-  expands to nothing when `ARGS` is empty without tripping "unbound
+  the Bash 3.2-compatible workaround `${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}`, which
+  expands to nothing when `_CCE_ARGS` is empty without tripping "unbound
   variable".
 - `-o pipefail` propagates a non-zero status out of any pipeline, so a
   silent failure mid-pipe (e.g. in the fzf path) is observable.
@@ -39,26 +39,26 @@ The script runs under `set -euo pipefail`:
 A run of `cce` proceeds through these stages:
 
 1. **Argument parsing.** A hand-written `while`/`case` loop walks `$@`.
-   The first non-option positional becomes `ENV_NAME`; **once `ENV_NAME`
-   is consumed, every remaining token is appended to `ARGS` verbatim and
+   The first non-option positional becomes `_CCE_ENV_NAME`; **once `_CCE_ENV_NAME`
+   is consumed, every remaining token is appended to `_CCE_ARGS` verbatim and
    parsing stops.** That removes the old footgun where `cce glm --help`
    would parse `--help` as a `cce` flag instead of forwarding it. An
-   unknown `-X` token before `ENV_NAME` is a hard error rather than
+   unknown `-X` token before `_CCE_ENV_NAME` is a hard error rather than
    silently being treated as a name. `--command` requires a non-empty
    value at parse time.
 2. **Config directory resolution.** Per the XDG spec, `XDG_CONFIG_HOME`
-   must be an absolute path; if it is, `ENV_DIR=$XDG_CONFIG_HOME/cce`.
+   must be an absolute path; if it is, `_CCE_ENV_DIR=$XDG_CONFIG_HOME/cce`.
    Anything else (unset, empty, relative) falls back to
    `$HOME/.config/cce`, with a warning if a relative `XDG_CONFIG_HOME`
    was rejected. If neither yields a usable path (`HOME` unset and no
    absolute `XDG_CONFIG_HOME`), the script errors out.
 3. **Mode dispatch.** In order: version → help → list/picker (when
-   `ENV_NAME` is empty) → run.
+   `_CCE_ENV_NAME` is empty) → run.
 4. **Environment name validation.** Before any file lookup that uses
-   `ENV_NAME`, the name is checked against the whitelist (see below).
+   `_CCE_ENV_NAME`, the name is checked against the whitelist (see below).
 5. **Permission warning.** A best-effort `stat` lookup warns if the env
    file is group- or world-writable.
-6. **Syntax pre-check.** `bash -n "$ENV_FILE"` validates the env file
+6. **Syntax pre-check.** `bash -n "$_CCE_ENV_FILE"` validates the env file
    parses cleanly, with a `cce`-context error if it does not. Parse
    errors do not trigger the runtime `ERR` trap below (no command runs),
    so we catch them here.
@@ -66,11 +66,11 @@ A run of `cce` proceeds through these stages:
    trap is armed so that a runtime command failure inside the env file
    prints a context line naming the file. The trap is cleared
    immediately after the source returns.
-8. **Command sanity check.** `command -v "$COMMAND"` runs *after*
+8. **Command sanity check.** `command -v "$_CCE_COMMAND"` runs *after*
    sourcing — the env file is allowed to modify `PATH`. If the command
    is not on `PATH` we exit 127 with a clear message instead of letting
    `exec` print bash's own error.
-9. **Exec.** `exec "$COMMAND" ${ARGS[@]+"${ARGS[@]}"}` replaces the
+9. **Exec.** `exec "$_CCE_COMMAND" ${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}` replaces the
    `cce` process with the target command.
 
 ## Environment name validation
@@ -84,10 +84,10 @@ Names are matched against `^[A-Za-z0-9_][A-Za-z0-9._-]*$`:
 
 This whitelist is enforced in two places:
 
-1. `validate_env_name "$ENV_NAME"` rejects user-supplied names from the
+1. `validate_env_name "$_CCE_ENV_NAME"` rejects user-supplied names from the
    command line. An invocation like `cce ../../etc/passwd` errors out
    before any filesystem lookup, so an env file path can never escape
-   `ENV_DIR`.
+   `_CCE_ENV_DIR`.
 2. `get_env_names` filters discovered files by the same regex and warns
    for each skipped file. The picker / list never offers something the
    runner would refuse.
@@ -103,7 +103,7 @@ filesystems, and fzf, which is the property we actually want.
 `get_env_names` prints sorted, valid environment names to stdout (one
 per line). Callers slurp the output via `while IFS= read -r`:
 
-- If `ENV_DIR` does not exist, the function prints nothing (not an
+- If `_CCE_ENV_DIR` does not exist, the function prints nothing (not an
   error).
 - Each `*.env` file's basename is checked against `NAME_RE`. Matches go
   into a local array; non-matches print a `Warning: skipping invalid env
@@ -124,7 +124,7 @@ The function deliberately avoids Bash 4+ features (`local -n` namerefs,
 
 ## Interactive selection
 
-When `ENV_NAME` is empty, `cce` checks `command -v fzf`. If `fzf` is
+When `_CCE_ENV_NAME` is empty, `cce` checks `command -v fzf`. If `fzf` is
 available *and* at least one environment exists, it pipes the sorted
 names into `fzf` and inspects the exit code explicitly:
 
@@ -135,7 +135,7 @@ fzf_status=$?
 set -e
 
 case $fzf_status in
-  0)     ENV_NAME="$selected" ;;
+  0)     _CCE_ENV_NAME="$selected" ;;
   1|130) list_environments "${env_names[@]}"; exit 0 ;;  # no-match or SIGINT
   *)     echo "Error: fzf exited with status $fzf_status" >&2; exit 1 ;;
 esac
@@ -147,7 +147,7 @@ The explicit case lets unexpected statuses surface as an error rather
 than dropping the user into a confusing "no environments selected" path.
 
 If a name is selected, control falls through to the normal run path —
-the `--command` and any trailing `ARGS` collected during parsing are
+the `--command` and any trailing `_CCE_ARGS` collected during parsing are
 reused verbatim.
 
 ## Source and exec
@@ -155,8 +155,8 @@ reused verbatim.
 The run path is deliberately small but defensive:
 
 ```bash
-trap 'echo "Error: failed while loading environment file: $ENV_FILE" >&2' ERR
-. "$ENV_FILE"
+trap 'echo "Error: failed while loading environment file: $_CCE_ENV_FILE" >&2' ERR
+. "$_CCE_ENV_FILE"
 trap - ERR
 ```
 
@@ -165,7 +165,7 @@ trap - ERR
 A natural-looking pattern is:
 
 ```bash
-if ! . "$ENV_FILE"; then
+if ! . "$_CCE_ENV_FILE"; then
   echo "Error: ..." >&2
   exit 1
 fi
@@ -180,7 +180,7 @@ continue with a half-loaded environment. The `ERR` trap pattern keeps
 
 There is one failure mode the `ERR` trap does not catch: a Bash *parse*
 error inside the env file, because no command actually runs. We catch
-those upfront with a `bash -n "$ENV_FILE"` syntax pre-check that prints
+those upfront with a `bash -n "$_CCE_ENV_FILE"` syntax pre-check that prints
 the bad-syntax error indented under a clear `cce` context line.
 
 ### Consequences of source + exec
@@ -199,3 +199,24 @@ environment over to the target command. Three things worth knowing:
 - The exit status is the target command's. The only exit code `cce`
   produces on its own paths is 1 for cce-level errors and 127 if the
   configured `--command` is not on `PATH` after sourcing.
+
+### Why internal variables are prefixed `_CCE_`
+
+Every variable that `cce` relies on across the `source` boundary
+(`_CCE_COMMAND`, `_CCE_ENV_NAME`, `_CCE_ENV_DIR`, `_CCE_ENV_FILE`,
+`_CCE_ARGS`) carries the `_CCE_` prefix and is marked `readonly`
+immediately before the env file is sourced. Two reasons, in order:
+
+1. **Collision avoidance.** Without the prefix, a user env file could
+   legitimately want to set `ENV_NAME=production` or `COMMAND=...` for
+   their own reasons — those are common names. The prefix keeps cce's
+   internals out of the namespace a user is likely to touch.
+2. **Defense in depth.** Even with unique names, a typo or a deliberate
+   assignment to `_CCE_COMMAND` inside an env file would silently
+   change what `exec` runs after sourcing returns. `readonly` turns
+   that into a bash-level error: the sourced file aborts with a
+   `readonly variable` message instead of proceeding with a hijacked
+   `_CCE_COMMAND`. Note that bash's readonly-assignment error exits via
+   a different path than a failed command, so the `ERR` trap's context
+   line is not guaranteed to fire on this specific failure — bash's
+   own error message is already unambiguous.

@@ -297,6 +297,98 @@ else
   fail "600 produces no permission warning" "stderr=$stderr"
 fi
 
+section "Internal variable protection (readonly)"
+
+# An env file that tries to override cce's internal _CCE_COMMAND must abort
+# the source via readonly + the ERR trap, surfacing a clear context.
+cat >"$CONF/ro_override.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+_CCE_COMMAND=/bin/true
+EOF
+chmod 600 "$CONF/ro_override.env"
+
+run_cce -c /bin/echo ro_override
+expect_exit 1 "override of _CCE_COMMAND aborts run"
+expect_stderr_has "readonly variable" "readonly error surfaces"
+# Note: bash's readonly-assignment error exits the sourced file via a
+# different path than a failed command, so the ERR trap's "failed while
+# loading" context line is not guaranteed to fire here. The bare
+# "readonly variable" message from bash itself is already unambiguous.
+
+# Same deal for _CCE_ARGS — the exec-time array must stay frozen.
+cat >"$CONF/ro_args.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+_CCE_ARGS=(wrong)
+EOF
+chmod 600 "$CONF/ro_args.env"
+
+run_cce -c /bin/echo ro_args
+expect_exit 1 "override of _CCE_ARGS aborts run"
+expect_stderr_has "readonly variable" "_CCE_ARGS readonly error surfaces"
+
+# Regression for the rename itself: a plain `ENV_NAME=production` in a user
+# env file must *not* collide with any cce internal, because the internal is
+# now prefixed. This is the whole point of the _CCE_ rename.
+cat >"$CONF/nocollide.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+ENV_NAME=production
+COMMAND=my-command
+ENV_DIR=/tmp/elsewhere
+export PROBE_ENV_NAME="$ENV_NAME"
+EOF
+chmod 600 "$CONF/nocollide.env"
+
+# shellcheck disable=SC2016  # the inner $var is expanded by /bin/sh, not us
+run_cce -c /bin/sh nocollide -c 'echo "$PROBE_ENV_NAME"'
+expect_exit 0 "plain ENV_NAME/COMMAND/ENV_DIR in env file do not collide"
+expect_stdout_eq "production" "unprefixed names are free for user use"
+
+section "Non-TTY fzf downgrade"
+
+# Stand up a stub `fzf` on PATH that would scream if invoked. If the TTY
+# guard works, stdin </dev/null should route the no-name path to list mode
+# without ever touching the stub. Without the guard, the stub would run and
+# appear in stderr.
+FZF_STUB_DIR="$TMP/fzfstub"
+mkdir -p "$FZF_STUB_DIR"
+cat >"$FZF_STUB_DIR/fzf" <<'EOF'
+#!/bin/sh
+echo "STUB_FZF_WAS_CALLED" >&2
+exit 1
+EOF
+chmod +x "$FZF_STUB_DIR/fzf"
+
+# Dedicated config root with exactly one valid env, so the picker branch
+# *would* otherwise trigger.
+SOLO_ROOT="$TMP/solo"
+SOLO="$SOLO_ROOT/cce"
+mkdir -p "$SOLO"
+cat >"$SOLO/only.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+EOF
+chmod 600 "$SOLO/only.env"
+
+tty_out=$(PATH="$FZF_STUB_DIR:/bin:/usr/bin" XDG_CONFIG_HOME="$SOLO_ROOT" "$CCE" </dev/null 2>"$TMP/_err")
+tty_rc=$?
+tty_err=$(cat "$TMP/_err")
+
+if [[ $tty_rc -eq 0 ]]; then
+  pass "non-TTY stdin with fzf on PATH exits 0"
+else
+  fail "non-TTY stdin with fzf on PATH exits 0" "rc=$tty_rc err=$tty_err"
+fi
+if [[ "$tty_err" != *"STUB_FZF_WAS_CALLED"* ]]; then
+  pass "non-TTY stdin does not invoke fzf (TTY guard)"
+else
+  fail "non-TTY stdin does not invoke fzf (TTY guard)" "stub was called: $tty_err"
+fi
+if [[ "$tty_out" == *"  only"* ]]; then
+  pass "non-TTY stdin downgrades to list output"
+else
+  fail "non-TTY stdin downgrades to list output" "stdout=$tty_out"
+fi
+unset tty_out tty_rc tty_err
+
 section "Empty ARGS exec (set -u workaround)"
 
 run_cce -c /bin/echo probe

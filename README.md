@@ -196,8 +196,12 @@ Comments start with `#` and are ignored by Bash.
 
 | Variable               | Required | Purpose                                  |
 |------------------------|----------|------------------------------------------|
-| `ANTHROPIC_AUTH_TOKEN` | Yes      | Authentication token for the API.        |
+| `ANTHROPIC_AUTH_TOKEN` | Yes\*    | Authentication token for the API.        |
+| `ANTHROPIC_API_KEY`    | Yes\*    | Legacy alias for the auth token. Either this or `ANTHROPIC_AUTH_TOKEN` must be set. |
 | `ANTHROPIC_BASE_URL`   | No       | API endpoint URL. Provider-default if absent. |
+
+\* At least one of `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY` must be
+set. `claude` accepts either name; the newer one is `ANTHROPIC_AUTH_TOKEN`.
 
 `cce` itself does not interpret these variables — it just sources the
 file and `exec`s the target command. The target command (usually

@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-VERSION="2.1.1"
+VERSION="2.1.2"
 
 # Names allowed for environment files (without the .env suffix).
 # First char: letter, digit, or underscore. Subsequent chars may also
@@ -16,11 +16,11 @@ VERSION="2.1.1"
 readonly NAME_RE='^[A-Za-z0-9_][A-Za-z0-9._-]*$'
 
 # Defaults
-COMMAND="claude"
-ENV_NAME=""
+_CCE_COMMAND="claude"
+_CCE_ENV_NAME=""
 SHOW_HELP=false
 SHOW_VERSION=false
-ARGS=()
+_CCE_ARGS=()
 
 # -----------------------------------------------------------------------------
 # Argument parsing
@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
         echo "Error: --command requires a non-empty argument" >&2
         exit 1
       fi
-      COMMAND="$2"
+      _CCE_COMMAND="$2"
       shift 2
       ;;
     -h | --help)
@@ -64,13 +64,13 @@ while [[ $# -gt 0 ]]; do
       exit 1
       ;;
     *)
-      ENV_NAME="$1"
+      _CCE_ENV_NAME="$1"
       shift
       # Optional `--` separator after NAME, kept for back-compat.
       if [[ ${1:-} == "--" ]]; then
         shift
       fi
-      ARGS+=("$@")
+      _CCE_ARGS+=("$@")
       break
       ;;
   esac
@@ -84,7 +84,7 @@ done
 
 xdg=${XDG_CONFIG_HOME:-}
 if [[ -n "$xdg" && "$xdg" == /* ]]; then
-  ENV_DIR="$xdg/cce"
+  _CCE_ENV_DIR="$xdg/cce"
 else
   if [[ -n "$xdg" && "$xdg" != /* ]]; then
     echo "Warning: XDG_CONFIG_HOME is not an absolute path; ignoring" >&2
@@ -93,7 +93,7 @@ else
     echo "Error: HOME is not set and XDG_CONFIG_HOME is not a usable absolute path" >&2
     exit 1
   fi
-  ENV_DIR="$HOME/.config/cce"
+  _CCE_ENV_DIR="$HOME/.config/cce"
 fi
 
 # -----------------------------------------------------------------------------
@@ -147,11 +147,11 @@ fi
 # whose basename does not match $NAME_RE are skipped with a warning so the
 # picker never offers something the runner would reject.
 get_env_names() {
-  if [[ ! -d "$ENV_DIR" ]]; then
+  if [[ ! -d "$_CCE_ENV_DIR" ]]; then
     return 0
   fi
   local f base names=()
-  for f in "$ENV_DIR"/*.env; do
+  for f in "$_CCE_ENV_DIR"/*.env; do
     [[ -f "$f" ]] || continue
     base=$(basename "$f" .env)
     if [[ "$base" =~ $NAME_RE ]]; then
@@ -184,8 +184,8 @@ list_environments() {
   echo "Usage: cce [OPTIONS] NAME [ARGS...]"
   if [[ $# -eq 0 ]]; then
     echo "No environments found."
-    echo "Create environment files in: $ENV_DIR"
-    if [[ ! -d "$ENV_DIR" ]]; then
+    echo "Create environment files in: $_CCE_ENV_DIR"
+    if [[ ! -d "$_CCE_ENV_DIR" ]]; then
       echo "Directory does not exist yet."
     fi
     return
@@ -200,13 +200,13 @@ list_environments() {
 # Mode dispatch — list / picker / run
 # -----------------------------------------------------------------------------
 
-if [[ -z "$ENV_NAME" ]]; then
+if [[ -z "$_CCE_ENV_NAME" ]]; then
   env_names=()
   while IFS= read -r name; do
     env_names+=("$name")
   done < <(get_env_names)
 
-  if [[ ${#env_names[@]} -gt 0 ]] && command -v fzf >/dev/null 2>&1; then
+  if [[ ${#env_names[@]} -gt 0 ]] && command -v fzf >/dev/null 2>&1 && [[ -t 0 ]]; then
     set +e
     selected=$(printf '%s\n' "${env_names[@]}" | fzf)
     fzf_status=$?
@@ -214,7 +214,7 @@ if [[ -z "$ENV_NAME" ]]; then
 
     case $fzf_status in
       0)
-        ENV_NAME="$selected"
+        _CCE_ENV_NAME="$selected"
         ;;
       1 | 130)
         # 1 = no match selected; 130 = SIGINT (Ctrl-C / Esc).
@@ -236,12 +236,12 @@ fi
 # Run an environment
 # -----------------------------------------------------------------------------
 
-validate_env_name "$ENV_NAME"
+validate_env_name "$_CCE_ENV_NAME"
 
-ENV_FILE="$ENV_DIR/${ENV_NAME}.env"
+_CCE_ENV_FILE="$_CCE_ENV_DIR/${_CCE_ENV_NAME}.env"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Error: environment file not found: $ENV_FILE" >&2
+if [[ ! -f "$_CCE_ENV_FILE" ]]; then
+  echo "Error: environment file not found: $_CCE_ENV_FILE" >&2
   exit 1
 fi
 
@@ -263,38 +263,46 @@ get_file_mode() {
   fi
 }
 
-file_mode=$(get_file_mode "$ENV_FILE")
+file_mode=$(get_file_mode "$_CCE_ENV_FILE")
 if [[ -n "$file_mode" ]] && ((8#$file_mode & 0022)); then
-  echo "Warning: $ENV_FILE is writable by group or other (mode $file_mode)" >&2
-  echo "Consider: chmod 600 $ENV_FILE" >&2
+  echo "Warning: $_CCE_ENV_FILE is writable by group or other (mode $file_mode)" >&2
+  echo "Consider: chmod 600 $_CCE_ENV_FILE" >&2
 fi
 
 # Pre-validate the env file's bash syntax. Parse errors don't trigger the
 # ERR trap below (no command runs), so we catch them here for a clean error
 # that names the env file rather than letting bash's own parser message
 # appear with no `cce` context.
-if ! bash -n "$ENV_FILE" 2>/dev/null; then
-  echo "Error: syntax error in environment file: $ENV_FILE" >&2
-  bash -n "$ENV_FILE" 2>&1 | sed 's/^/  /' >&2 || true
+if ! bash -n "$_CCE_ENV_FILE" 2>/dev/null; then
+  echo "Error: syntax error in environment file: $_CCE_ENV_FILE" >&2
+  bash -n "$_CCE_ENV_FILE" 2>&1 | sed 's/^/  /' >&2 || true
   exit 1
 fi
+
+# Lock down cce's internal state before handing control to the env file.
+# The `_CCE_` prefix is intentional: it reduces accidental collisions with
+# variable names a user might legitimately set in their env file (e.g.
+# `ENV_NAME=production`). Marking them readonly also means any assignment
+# to these exact names — accidental or malicious — aborts sourcing via
+# the ERR trap below with a clear "readonly variable" message.
+readonly _CCE_COMMAND _CCE_ENV_DIR _CCE_ENV_NAME _CCE_ENV_FILE _CCE_ARGS
 
 # Source the environment file. An ERR trap adds context if anything inside
 # the file fails at runtime — `if ! . file; then` would put the source in
 # a tested context, which disables `set -e` inside the sourced file and
 # would mask real errors.
-trap 'echo "Error: failed while loading environment file: $ENV_FILE" >&2' ERR
+trap 'echo "Error: failed while loading environment file: $_CCE_ENV_FILE" >&2' ERR
 # shellcheck disable=SC1090  # env file path is intentionally dynamic
-. "$ENV_FILE"
+. "$_CCE_ENV_FILE"
 trap - ERR
 
-# After sourcing, the env file may have changed PATH; verify $COMMAND now.
-if ! command -v "$COMMAND" >/dev/null 2>&1; then
-  echo "Error: command not found: $COMMAND" >&2
-  echo "Make sure '$COMMAND' is installed and on PATH." >&2
+# After sourcing, the env file may have changed PATH; verify $_CCE_COMMAND now.
+if ! command -v "$_CCE_COMMAND" >/dev/null 2>&1; then
+  echo "Error: command not found: $_CCE_COMMAND" >&2
+  echo "Make sure '$_CCE_COMMAND' is installed and on PATH." >&2
   exit 127
 fi
 
-# `${ARGS[@]+"${ARGS[@]}"}` is the Bash 3.2 + `set -u` workaround for
-# expanding a possibly-empty array without tripping "unbound variable".
-exec "$COMMAND" ${ARGS[@]+"${ARGS[@]}"}
+# `${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}` is the Bash 3.2 + `set -u` workaround
+# for expanding a possibly-empty array without tripping "unbound variable".
+exec "$_CCE_COMMAND" ${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}
