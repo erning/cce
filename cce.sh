@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-VERSION="2.1.3"
+VERSION="2.1.4"
 
 # Names allowed for environment files (without the .env suffix).
 # First char: letter, digit, or underscore. Subsequent chars may also
@@ -126,7 +126,7 @@ Options:
   -h, --help           Print help.
 
 If NAME is omitted, lists available environments (interactive selection
-via fzf if installed).
+via fzf if installed and stdin is a terminal).
 
 Config directory:
   $XDG_CONFIG_HOME/cce/    (if XDG_CONFIG_HOME is set and absolute)
@@ -308,7 +308,11 @@ builtin trap - ERR
 if ! builtin command -v "$_CCE_COMMAND" >/dev/null 2>&1; then
   echo "Error: command not found: $_CCE_COMMAND" >&2
   echo "Make sure '$_CCE_COMMAND' is installed and on PATH." >&2
-  exit 127
+  # `builtin exit` for the same reason as builtin trap/command/exec above:
+  # an env file can define an `exit()` function, which would otherwise
+  # let control fall through to the final `builtin exec` and produce
+  # messy double-error output.
+  builtin exit 127
 fi
 
 # `${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}` is the Bash 3.2 + `set -u` workaround

@@ -71,8 +71,10 @@ A run of `cce` proceeds through these stages:
    why the prefix matters.
 8. **Command sanity check.** `builtin command -v "$_CCE_COMMAND"` runs
    *after* sourcing — the env file is allowed to modify `PATH`. If the
-   command is not on `PATH` we exit 127 with a clear message instead of
-   letting `exec` print bash's own error.
+   command is not on `PATH` we `builtin exit 127` with a clear message
+   instead of letting `exec` print bash's own error. The `exit` call
+   uses the `builtin` prefix for the same reason as the other
+   post-source builtin calls.
 9. **Exec.** `builtin exec "$_CCE_COMMAND" ${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}`
    replaces the `cce` process with the target command.
 
@@ -229,6 +231,16 @@ environment over to the target command. Three things worth knowing:
 - The exit status is the target command's. The only exit code `cce`
   produces on its own paths is 1 for cce-level errors and 127 if the
   configured `--command` is not on `PATH` after sourcing.
+- A bare `return` inside the env file **ends the source early** (that
+  is standard Bash behavior for sourced files — `return` is only valid
+  in a sourced context or a function body). Any assignments after the
+  `return` are skipped, the `ERR` trap does not fire, and cce proceeds
+  to the `command -v` + `exec` steps with whatever the env file had
+  set up to that point. This is occasionally useful (e.g. gate an env
+  file on a hostname check: `[[ $(hostname) == prod-* ]] || return 0`)
+  but it is also a foot-gun if you use `return` accidentally. If you
+  want the target command to abort instead of run, use `exit 1`, not
+  `return`.
 
 ### Why internal variables are prefixed `_CCE_`
 
@@ -268,12 +280,15 @@ That function definition survives the `source` call. Without a guard,
 `exec` function — the target command never replaces the cce process,
 and the user sees `hijacked /bin/echo …` instead of their command
 actually running. The same attack works against `command -v` (the
-post-source PATH check) and `trap - ERR` (the loading-trap cleanup).
+post-source PATH check), `trap - ERR` (the loading-trap cleanup), and
+`exit 127` (the command-not-found branch, which would otherwise let
+control fall through into the final exec and produce a jumbled
+double-error).
 
 The fix is the `builtin` prefix. `builtin NAME` tells bash to look
 `NAME` up in the builtin table and skip function lookup entirely, so
-the actual `exec` / `command` / `trap` runs regardless of what the
-env file defined:
+the actual `exec` / `command` / `trap` / `exit` runs regardless of
+what the env file defined:
 
 ```bash
 builtin trap 'echo "Error: ..." >&2' ERR
@@ -281,7 +296,8 @@ builtin trap 'echo "Error: ..." >&2' ERR
 builtin trap - ERR
 
 if ! builtin command -v "$_CCE_COMMAND" >/dev/null 2>&1; then
-  ...
+  echo "Error: command not found: $_CCE_COMMAND" >&2
+  builtin exit 127
 fi
 
 builtin exec "$_CCE_COMMAND" ${_CCE_ARGS[@]+"${_CCE_ARGS[@]}"}

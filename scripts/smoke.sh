@@ -376,6 +376,65 @@ else
   fail "no shadowed function fired during the run" "stderr=$stderr"
 fi
 
+# The `builtin exit` paired with the command-not-found branch. Without
+# it, an env file that shadows `exit` lets control fall through into the
+# final exec, and the user sees a jumbled double-error (cce's
+# "command not found" + bash's own exec failure) and an exit code that
+# comes from bash's exec attempt instead of cce's intended 127.
+cat >"$CONF/shadow_exit.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+exit() {
+  echo "HIJACKED_EXIT $*" >&2
+  return 0
+}
+EOF
+chmod 600 "$CONF/shadow_exit.env"
+
+run_cce -c /no/such/binary shadow_exit
+expect_exit 127 "shadowed exit: cmd-not-found still exits 127 cleanly"
+expect_stderr_has "command not found: /no/such/binary" "shadowed exit: cce's own error message still surfaces"
+if [[ "$stderr" != *HIJACKED_EXIT* ]]; then
+  pass "shadowed exit: env-file exit() was never invoked"
+else
+  fail "shadowed exit: env-file exit() was never invoked" "stderr=$stderr"
+fi
+
+section "Function-shadow residual limit (pinned out-of-scope)"
+
+# `builtin` prefixes guard exec/command/trap/exit against env-file
+# function overrides, BUT `builtin` itself can still be shadowed by a
+# function literally named `builtin`. DESIGN.md → "Non-goals" marks
+# this as intentionally out of scope — the env file is user-supplied
+# bash code, and defending against a function called `builtin` would
+# require infinite regress (`builtin builtin …`).
+#
+# This test pins the current observed behavior so any future change
+# that deepens the guard (e.g. sourcing in a subshell, or using a
+# different mechanism entirely) trips a visible failure and forces an
+# explicit update to the Non-goals section. It is intentionally
+# asserting that the documented limit still holds, not that the script
+# works "correctly" in this adversarial case.
+cat >"$CONF/shadow_builtin_itself.env" <<'EOF'
+export ANTHROPIC_AUTH_TOKEN=fake
+builtin() {
+  echo "HIJACKED_BUILTIN $*" >&2
+  return 0
+}
+EOF
+chmod 600 "$CONF/shadow_builtin_itself.env"
+
+run_cce -c /bin/echo shadow_builtin_itself real-arg
+# Hijacked `builtin exec …` becomes a call to the shadow function,
+# which prints to stderr and returns 0. The real /bin/echo never
+# runs, and cce's own control flow appears to "succeed" (exit 0).
+expect_exit 0 "shadow_builtin_itself: hijack returns 0, cce exits 0 (documented limit)"
+expect_stdout_eq "" "shadow_builtin_itself: real target did NOT run"
+if [[ "$stderr" == *HIJACKED_BUILTIN* ]]; then
+  pass "shadow_builtin_itself: hijack fired (pins out-of-scope decision in DESIGN.md)"
+else
+  fail "shadow_builtin_itself: hijack fired" "stderr=$stderr"
+fi
+
 section "Non-TTY fzf downgrade"
 
 # Stand up a stub `fzf` on PATH that would scream if invoked. If the TTY
